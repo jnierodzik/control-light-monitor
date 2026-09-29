@@ -315,6 +315,12 @@ omitted, so the geometry you calibrate is the geometry you test.
 
 ## On the Pi
 
+**Setting up from scratch: [`docs/pi-setup.md`](docs/pi-setup.md)** — parts check
+(including the 22-pin cable the Pi 5 needs), flashing for headless boot, and a
+stock-tools procedure for proving the underexposure technique on your actual light before
+any of this code runs on the Pi.
+
+
 `picamera2` is not pip-installable in the normal way. It comes from apt, and the venv
 must be able to see it:
 
