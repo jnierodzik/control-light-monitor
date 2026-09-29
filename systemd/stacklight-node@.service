@@ -1,0 +1,57 @@
+# Templated per node, so a second camera is a deployment change and nothing more:
+#
+#   sudo systemctl enable --now stacklight-node@machine1
+#
+# reads /etc/stacklight/machine1.yaml. A second node is another config file and another
+# `systemctl enable --now stacklight-node@<name>`.
+#
+# Install to /etc/systemd/system/stacklight-node@.service
+
+[Unit]
+Description=Stack light monitor node (%i)
+Documentation=https://github.com/jnierodzik/control-light-monitor
+# The node tolerates a broker that is not up yet, so this is a preference, not a
+# requirement: it will sit there sampling the light and retrying.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Change this if you chose a different username when flashing the card. The video group
+# is what grants access to the camera devices; without it libcamera finds nothing.
+User=pi
+SupplementaryGroups=video
+
+WorkingDirectory=/opt/stacklight
+# The venv must have been created with --system-site-packages, or picamera2 (which comes
+# from apt, not pip) will not be importable.
+ExecStart=/opt/stacklight/.venv/bin/stacklight-node /etc/stacklight/%i.yaml
+Environment=PYTHONUNBUFFERED=1
+
+# A monitor that stays down is worse than no monitor.
+Restart=always
+RestartSec=5
+# Do not give up after repeated failures: a camera that is unplugged and replugged, or a
+# transient libcamera fault, must not permanently disable the unit.
+StartLimitIntervalSec=0
+
+# SIGTERM makes the node flip availability to offline and release the camera before it
+# exits. Give it time to finish the frame in hand.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stacklight-%i
+
+# Modest hardening. Deliberately not ProtectSystem=strict or PrivateDevices: libcamera
+# needs /dev/dma_heap, /dev/media* and /dev/video*, and locking those away is a reliable
+# way to produce a camera that cannot be found.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

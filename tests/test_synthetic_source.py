@@ -339,9 +339,15 @@ def test_source_override_swaps_the_backend_without_editing_the_file(config_dict)
     assert isinstance(source, SyntheticSource)
 
 
-def test_picamera_source_fails_clearly_on_a_machine_without_it(config_dict):
-    from stacklight.errors import SourceUnavailableError
+def test_picamera_source_fails_clearly_on_a_machine_without_it(config_dict, monkeypatch):
+    """Constructing is fine anywhere; it is starting that needs the hardware. The error
+    has to name the fix, because a bare ImportError on picamera2 is a puzzle."""
+    import sys
 
+    from stacklight.errors import SourceError
+
+    monkeypatch.setitem(sys.modules, "picamera2", None)
     config_dict["camera"]["source"] = "picamera"
-    with pytest.raises(SourceUnavailableError, match="synthetic"):
-        create_source(parse_config(config_dict))
+    source = create_source(parse_config(config_dict))
+    with pytest.raises(SourceError, match="system-site-packages"):
+        source.start()

@@ -232,6 +232,14 @@ class CameraConfig:
     lens_position: float | None
     file: FileSourceConfig | None
     synthetic: SyntheticConfig
+    #: Red and blue ISP gains, applied only when AWB is off. With auto-white-balance
+    #: disabled the ISP keeps whatever gains it last had, so they have to be stated or
+    #: the colour balance is undefined.
+    colour_gains: tuple[float, float] = (1.0, 1.0)
+    #: picamera2 delivers an "RGB888" stream as B, G, R in memory, so the channels are
+    #: swapped back by default. Set false if snapshot colours come out inverted.
+    swap_rb: bool = True
+    buffer_count: int = 4
 
     @property
     def width(self) -> int:
@@ -600,6 +608,9 @@ def _parse_camera(data: Any, path: str, base_dir: Path | None) -> CameraConfig:
         "lens_position",
         "file",
         "synthetic",
+        "colour_gains",
+        "swap_rb",
+        "buffer_count",
     )
     _reject_unknown(data, allowed, path)
 
@@ -629,6 +640,13 @@ def _parse_camera(data: Any, path: str, base_dir: Path | None) -> CameraConfig:
         ),
         file=file_cfg,
         synthetic=_parse_synthetic(data.get("synthetic"), f"{path}.synthetic", resolution),
+        colour_gains=_pair(
+            data.get("colour_gains", [1.0, 1.0]), f"{path}.colour_gains", minimum=0.0
+        ),
+        swap_rb=_boolean(data.get("swap_rb", True), f"{path}.swap_rb"),
+        buffer_count=_number(
+            data.get("buffer_count", 4), f"{path}.buffer_count", integer=True, minimum=1
+        ),
     )
 
 

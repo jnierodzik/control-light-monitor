@@ -201,21 +201,89 @@ questions in the detection tuning.
 
 ## 5. Install the node software
 
-Not yet — `PiCameraSource` is the next piece being built. When it lands, the shape is:
+All of this is driven from the Mac. Substitute your hostname, username and node name:
 
 ```bash
-sudo apt install -y python3-picamera2 git
+make bootstrap PI=stacklight.local PI_USER=youruser
 ```
 
-`picamera2` is not reliably pip-installable; it comes from apt. So the venv has to be
-able to see system packages:
+That installs the apt packages, creates `/opt/stacklight` and `/etc/stacklight`, and
+builds the venv. The one detail that matters:
 
 ```bash
 python3 -m venv --system-site-packages .venv
 ```
 
-A venv made without `--system-site-packages` will import everything else fine and then
-fail on `picamera2` alone, which is a confusing way to lose twenty minutes.
+`picamera2` is not reliably pip-installable — it comes from apt. A venv made *without*
+`--system-site-packages` will install everything else fine and then fail on `picamera2`
+alone, which is a confusing way to lose twenty minutes.
+
+Now put the exposure numbers you found in step 4 into `config/machine1.yaml`:
+
+```yaml
+camera:
+  source: picamera
+  exposure_us: 800        # your --shutter
+  analogue_gain: 1.0      # your --gain
+  lens_position: 3.5      # your --lens-position
+```
+
+and push it:
+
+```bash
+make deploy PI=stacklight.local PI_USER=youruser NODE=machine1
+```
+
+`deploy` rsyncs the code, installs the config to `/etc/stacklight/machine1.yaml`, installs
+the systemd unit, and runs `stacklight validate` on the Pi so a bad config fails before
+the service ever starts.
+
+### First run, in the foreground
+
+Before making it a service, watch it work. This is the same tuning view as `make dev`,
+but fed by the real camera:
+
+```bash
+ssh youruser@stacklight.local
+/opt/stacklight/.venv/bin/stacklight detect /etc/stacklight/machine1.yaml --interval 1
+```
+
+You get a line per second with the measured brightness of each ROI beside the mode it
+resolves to. Cover the light with your hand, uncover it, and watch the numbers move. If
+the ROIs are nowhere near the segments, that is expected at this point — nothing has
+been calibrated yet; step 4's numbers only fix exposure, not geometry. The calibration UI
+is what places the rectangles.
+
+### Check the colour channels
+
+One thing I could not verify without hardware: picamera2's format naming is famously
+confusing about byte order, and the code assumes an `"RGB888"` stream arrives B-G-R in
+memory and swaps it back. Detection does not care — the default metric takes the maximum
+channel, so a lit segment reads the same either way — but snapshots would show red and
+blue swapped.
+
+Light the *red* segment, grab a snapshot, and look at it. If the red lamp appears blue,
+set:
+
+```yaml
+camera:
+  swap_rb: false
+```
+
+### Run it as a service
+
+```bash
+ssh youruser@stacklight.local 'sudo systemctl enable --now stacklight-node@machine1'
+make logs PI=stacklight.local PI_USER=youruser NODE=machine1
+```
+
+The unit is templated on the node name, so a second camera later is another config file
+and another `systemctl enable --now stacklight-node@<name>` — nothing central changes.
+
+**If the service fails but the foreground run worked**, it is almost certainly one of
+two things: the unit's `User=pi` does not match the username you chose when flashing
+(edit `systemd/stacklight-node@.service`), or that user is not in the `video` group,
+without which libcamera finds no camera at all.
 
 ---
 

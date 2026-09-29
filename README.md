@@ -56,10 +56,11 @@ This project is being built in reviewable steps.
 
 - [x] **1. Skeleton, config, `FrameSource` + `SyntheticSource`**
 - [x] **2. Detection engine (ROI sampling, flash detection, debounce, state resolution)**
-- [x] **3. MQTT publisher, heartbeats, retained state**
-- [ ] 4. Calibration web UI
-- [ ] 5. Rules engine, ntfy, SQLite logging, watchdog
-- [ ] 6. `PiCameraSource`, systemd units, deployment
+- [x] **3. MQTT publisher, heartbeats, retained state** — verified against mosquitto
+- [x] **4. `PiCameraSource`, systemd units, deployment** — pulled ahead of the
+      calibration UI, so ROIs get dialled in against the real camera rather than twice
+- [ ] 5. Calibration web UI
+- [ ] 6. Rules engine, ntfy, SQLite logging, watchdog
 
 ## Development, with no camera and no Pi
 
@@ -325,10 +326,46 @@ any of this code runs on the Pi.
 must be able to see it:
 
 ```bash
+make bootstrap PI=stacklight.local PI_USER=youruser
+make deploy    PI=stacklight.local PI_USER=youruser NODE=machine1
+```
+
+which amounts to:
+
+```bash
 sudo apt install -y python3-picamera2
 python3 -m venv --system-site-packages .venv
-.venv/bin/pip install -e '.[dev]'
+.venv/bin/pip install -e /opt/stacklight
 ```
+
+The systemd unit is templated per node (`stacklight-node@machine1`), so adding a second
+camera is a second config file and a second `systemctl enable` — nothing central changes.
+`make logs`, `make restart` and `make probe` cover the day-to-day.
+
+### What the camera is locked to
+
+Everything automatic is switched off, because the detector needs the same frame under the
+same conditions every time: `AeEnable` and `AwbEnable` false, `ExposureTime` and
+`AnalogueGain` pinned, `AfMode` manual with an explicit `LensPosition`, and
+`FrameDurationLimits` pinned at *both* ends — a single limit would let the camera
+lengthen exposure to chase a brightness target. `ColourGains` are stated explicitly too:
+with AWB off the ISP keeps whatever gains it last had, so leaving them unset makes colour
+balance undefined between runs.
+
+The camera's own frame timing paces the loop rather than a sleep, since
+`FrameDurationLimits` already pins the rate and `capture_array` blocks for the next
+frame; sleeping on top of that would wait out a frame already in hand and halve the
+effective rate. What the sensor actually *accepted* is read back and logged at startup,
+because a sensor silently clamps an out-of-range exposure, and finding that out from a
+log line beats inferring it from puzzling brightness values.
+
+Note that changing `camera.resolution` can change the sensor mode and therefore the field
+of view, which invalidates calibrated ROIs. The mode the ISP chose is logged at startup.
+
+`camera.swap_rb` defaults to true: picamera2 delivers an `"RGB888"` stream as B-G-R in
+memory, so the channels are swapped back. Detection is indifferent — the default metric
+takes the maximum channel — but snapshot colours are not, so set it false if red and blue
+come out inverted.
 
 The Pi camera import is lazy and optional, so this package imports cleanly on a machine
 with no `picamera2` at all. Asking for `camera.source: picamera` there fails with a

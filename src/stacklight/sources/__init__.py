@@ -92,13 +92,17 @@ def _create_picamera_source(
         from .picamera import PiCameraSource
     except ImportError as exc:
         raise SourceUnavailableError(
-            "the picamera source is not available yet (it lands with the deployment "
-            "step). On a laptop use camera.source: synthetic, or pass "
-            "--source synthetic."
+            "the picamera source needs picamera2, which only exists on a Raspberry "
+            "Pi. On the Pi: `sudo apt install python3-picamera2`, and create the venv "
+            "with `python3 -m venv --system-site-packages` so it can see it. Anywhere "
+            "else use camera.source: synthetic, or pass --source synthetic."
         ) from exc
     return PiCameraSource(
         config.camera.resolution,
         config.camera.fps,
         controls=controls,
         clock=clock,
+        colour_gains=config.camera.colour_gains,
+        swap_rb=config.camera.swap_rb,
+        buffer_count=config.camera.buffer_count,
     )
