@@ -1,0 +1,47 @@
+[project]
+name = "stacklight-monitor"
+version = "0.1.0"
+description = "Watch a machine stack light with a Pi camera and publish semantic state over MQTT."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.26",
+    "paho-mqtt>=2.1",
+    "flask>=3.0",
+    "pyyaml>=6.0",
+    "pillow>=10.0",
+]
+
+# picamera2 is deliberately NOT listed. It is not reliably pip-installable; on the Pi it
+# comes from `apt install python3-picamera2` and is picked up via a venv created with
+# --system-site-packages. See README.
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+opencv = ["opencv-python-headless>=4.9"]
+
+[project.scripts]
+stacklight = "stacklight.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stacklight"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "T20", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# The CLI is the one place that is allowed to write to stdout.
+"src/stacklight/cli.py" = ["T20"]

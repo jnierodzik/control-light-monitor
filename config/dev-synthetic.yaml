@@ -1,0 +1,57 @@
+# Laptop development config: same geometry and thresholds as the machine node, but the
+# frames are drawn rather than captured. `make dev` runs against this.
+
+node_id: devnode
+
+mqtt:
+  host: localhost
+  port: 1883
+  base_topic: shop/lights
+
+camera:
+  source: synthetic
+  resolution: [1280, 720]
+  exposure_us: 800
+  analogue_gain: 1.0
+  awb_enable: false
+  lens_position: 3.5
+  fps: 15
+  synthetic:
+    lit_value: 210      # what a lit segment reads at the exposure above
+    ambient: 4          # room light bleed
+    noise_sigma: 1.5    # sensor read noise
+    glow_px: 4          # LED spill past the ROI edge
+    flash_hz: 1.5
+    flash_duty: 0.5
+
+segments:
+  - name: red
+    roi: [412, 88, 46, 60]
+    threshold: 90
+  - name: green
+    roi: [412, 152, 46, 60]
+    threshold: 90
+
+dark_reference:
+  roi: [300, 400, 40, 40]
+  threshold: 60
+
+detection:
+  debounce_s: 1.5
+  flash_window_s: 2.0
+  flash_duty_range: [0.2, 0.8]
+  flash_min_transitions: 2
+
+states:
+  fault:     {red: steady,   green: "off"}
+  running:   {red: "off",    green: steady}
+  attention: {red: flashing}
+  idle:      {red: "off",    green: "off"}
+
+logging:
+  level: DEBUG
+  format: text
+
+calibration:
+  port: 8080
+  sample_dir: ../samples/dev

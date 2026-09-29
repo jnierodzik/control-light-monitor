@@ -1,0 +1,63 @@
+# industrial machine -- two-segment stack light, red over green.
+#
+# ROIs and thresholds here are placeholders. Set them with the calibration UI once
+# the camera is mounted; do not guess them by hand.
+
+node_id: machine1
+
+mqtt:
+  host: localhost
+  port: 1883
+  base_topic: shop/lights
+
+camera:
+  source: picamera
+  resolution: [1280, 720]
+  # Heavy underexposure is the whole trick: the room goes black and only an
+  # energised LED registers. Dial these in visually with the calibration UI.
+  exposure_us: 800
+  analogue_gain: 1.0
+  awb_enable: false
+  lens_position: 3.5      # dioptres; 1/metres. 3.5 ~= 29cm. Fixed, never autofocus.
+  fps: 15
+
+segments:
+  - name: red
+    roi: [412, 88, 46, 60]     # x, y, w, h
+    threshold: 90
+  - name: green
+    roi: [412, 152, 46, 60]
+    threshold: 90
+
+# A region that must ALWAYS read dark. If it goes bright, the camera has been bumped
+# or the lighting changed, and every other reading in the frame is suspect.
+dark_reference:
+  roi: [300, 400, 40, 40]
+  threshold: 60
+
+detection:
+  debounce_s: 1.5
+  flash_window_s: 2.0
+  flash_duty_range: [0.2, 0.8]
+  flash_min_transitions: 2
+
+# Segments a state does not mention are wildcards: `attention` matches whenever red
+# is flashing, whatever green is doing. The most specific match wins. Run
+# `stacklight states config/machine1.yaml` to see the full resolution table.
+#
+# These meanings are a first guess. Correct them once the machine has been watched
+# running; nothing in the code depends on these particular names.
+states:
+  fault:     {red: steady,   green: "off"}
+  running:   {red: "off",    green: steady}
+  attention: {red: flashing}
+  idle:      {red: "off",    green: "off"}
+
+logging:
+  level: INFO
+  format: text
+
+calibration:
+  host: 0.0.0.0
+  port: 8080
+  sample_dir: ../samples/machine1
