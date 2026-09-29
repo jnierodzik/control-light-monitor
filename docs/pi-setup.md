@@ -287,6 +287,83 @@ without which libcamera finds no camera at all.
 
 ---
 
+## 5a. Enclosure
+
+The Pi has to live within 500mm of the light, because that is the cable length — which
+puts it in the working area of a press that throws powder residue, primer dust and brass
+shavings. **Brass shavings are conductive**, and a bare board with exposed GPIO pins in
+that environment will eventually produce an intermittent fault that looks exactly like a
+camera problem. Bench work bare is fine; permanent mounting is not.
+
+### The cooling-versus-dust tension
+
+The Active Cooler needs airflow, and airflow is how dust gets in — a fan does not merely
+admit particulate, it actively pulls it through the fins.
+
+Worth knowing: **this workload is thermally trivial.** Capturing 720p at 15fps and taking
+numpy means over a few thousand pixels per segment leaves the Pi 5 drawing roughly 4–5W,
+against the ~12W of a genuinely busy one. Active cooling is sized for sustained full-CPU
+load, which this will never be. So dust, not heat, is the binding constraint here, and the
+enclosure should be chosen accordingly.
+
+A good compromise that uses hardware already bought: **fit the Active Cooler but leave its
+fan lead unplugged.** It is a spring-mounted aluminium fin stack with a pre-applied thermal
+pad, so it works as a perfectly reasonable passive heatsink, and nothing is pulling grit
+through it. Check the temperature after a day of running:
+
+```bash
+vcgencmd measure_temp
+```
+
+Anything under about 70°C has plenty of margin — the Pi 5 throttles in the low 80s. If it
+sits higher than you like, plug the fan back in and accept periodic cleaning.
+
+### Recommended print
+
+[**Pi 5 Case / Enclosure by Power_Billy**](https://www.thingiverse.com/thing:6434416)
+(Thingiverse, CC BY-NC-SA). Mix-and-match bases and lids, all combinable:
+
+| File | Use |
+| --- | --- |
+| `PI5_Boden_mit_Fluegel.stl` | Base **with wings** — screw tabs for mounting to a wall or bracket |
+| `PI5_Gehäuse_Boden.stl` | Base without wings |
+| `PI5_Deckel_aktiv_clean.stl` | Active-cooler lid, cable pass-through, **no extra vents** |
+| `PI5_Deckel_aktiv_plus.stl` | Active-cooler lid, cable pass-through, plus ventilation slots |
+| `PI5_Deckel_passiv_clean.stl` | Passive lid with vents, **no cable pass-through** |
+
+For this install: **`PI5_Boden_mit_Fluegel` + `PI5_Deckel_aktiv_clean`.** The wings solve
+mounting, and `aktiv_clean` is the most closed lid that still has a cable pass-through —
+it has the Active Cooler's fan aperture but no additional vents to let grit in.
+
+The listing is in German; `Kabeldurchführung` is the cable pass-through, `Flügel` the
+mounting wings, `Boden` the base, `Deckel` the lid.
+
+Two changes to the designer's suggested settings:
+
+* **Print in PETG, not the PLA listed.** PLA softens around 60°C, and a closed case in a
+  warm shop with sun on it is not a good place to find that out. PETG or ASA is tougher
+  and handles the heat.
+* **More than 15% infill and 3 walls**, for a part that will be mounted near a vibrating
+  machine.
+
+**Widen the cable slot if needed.** The 22-pin end of the cable is roughly 11.5mm wide,
+but the 15-pin camera end is about 16mm. Either open the slot to pass the wider end, or
+thread the cable through the case *before* attaching it to the camera. Measure your own
+cable rather than trusting those numbers.
+
+### Alternative
+
+[**Pi 5 case compatible with AI Kit and camera by sbguy**](https://www.thingiverse.com/thing:6708018)
+(CC BY-NC-SA) is purpose-built for a Pi 5 with active cooling *and* a camera, including a
+breakaway tab specifically for the camera ribbon. It also has a camera mount on the lid,
+which is not useful here — the camera goes on the arm at the light — but the tab is the
+feature. It has no wall-mount wings, so mounting is on you.
+
+Both are CC BY-NC-SA. Non-commercial: worth a thought if this press is earning money
+rather than serving a hobby.
+
+---
+
 ## 6. One decision to make: where does the broker live?
 
 The architecture has the broker and the rules engine as separate processes from the node,
