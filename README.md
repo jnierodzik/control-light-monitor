@@ -48,7 +48,7 @@ Topics, namespaced per node id:
 This project is being built in reviewable steps.
 
 - [x] **1. Skeleton, config, `FrameSource` + `SyntheticSource`**
-- [ ] 2. Detection engine (ROI sampling, flash detection, debounce, state resolution)
+- [x] **2. Detection engine (ROI sampling, flash detection, debounce, state resolution)**
 - [ ] 3. MQTT publisher, heartbeats, retained state
 - [ ] 4. Calibration web UI
 - [ ] 5. Rules engine, ntfy, SQLite logging, watchdog
@@ -68,6 +68,13 @@ make test
 make lint
 ```
 
+Watch the detection engine run a scripted light sequence, start to finish, in a few
+seconds of wall time:
+
+```bash
+make dev
+```
+
 Inspect a config without any hardware:
 
 ```bash
@@ -79,6 +86,13 @@ after any edit to the `states:` block:
 
 ```bash
 uv run stacklight states config/machine1.yaml
+```
+
+Watch the engine against a live source, with raw brightness beside each resolved mode.
+This is the tuning tool:
+
+```bash
+uv run stacklight detect config/machine1.yaml --interval 1
 ```
 
 Render synthetic frames to PNG to eyeball what the detector will be fed:
@@ -146,6 +160,64 @@ answer.
 and a saturated green segment both read near 255, so one threshold works for both. A
 plain RGB average would put a fully lit red segment at ~85 — *below* a threshold of 90.
 
+## Detection
+
+Per frame, per segment: mean brightness inside the ROI, compared against a threshold.
+A segment is *lit* when the mean exceeds it. Over a rolling `flash_window_s` the engine
+tracks the lit **duty cycle** and the **transition count**, and the mode falls out of
+those two numbers:
+
+| Condition | Mode |
+| --- | --- |
+| Transitions ≥ `flash_min_transitions` **and** duty inside `flash_duty_range` | `flashing` |
+| Duty ≥ the top of `flash_duty_range` | `steady` |
+| Duty ≤ the bottom of `flash_duty_range` | `off` |
+| Otherwise (mid-range duty, too few transitions) | previous mode is held |
+
+`flashing` is never collapsed into `steady`. The last row matters more than it looks:
+that case happens while the window is still draining after a real change, and holding
+the previous mode there means a segment coming on reads `off` until the evidence is
+solid, rather than flickering on the way up.
+
+The resulting segment pattern resolves to a state name, which then has to hold for
+`debounce_s` before it is committed. Only committed transitions get published.
+
+### Latency
+
+The window has to drain before a duty cycle clears the steady or off boundary, and only
+then does debounce start. So with the machine's 2s window, an 0.8 duty ceiling and a 1.5s
+debounce, a light change takes **1.9–3.1s** to reach a notification. `stacklight
+validate` prints the figure for whatever config you hand it. Shorten `flash_window_s`
+for faster response, at the cost of being unable to see slower flashes.
+
+### Two tuning consequences worth knowing
+
+**A single blink looks exactly like a flash.** One 0.5s pulse puts two transitions and a
+24% duty cycle in a 2s window — indistinguishable from flashing, given
+`flash_min_transitions: 2`. It holds that way for longer than the debounce, so it
+commits. It does *not* become `running`; green-flashing matches no configured state, so
+it lands on `unknown`. Raising `flash_min_transitions` to 3 rejects single pulses, at the
+cost of needing roughly 0.75Hz or faster to see a real flash in a 2s window. Left at 2
+until the machine's actual flash rate is known.
+
+**A flash slower than the window cannot be seen.** At 0.2Hz against a 2s window the
+engine reads alternating `steady` and `off`, never `flashing`. If the light turns out to
+blink that slowly, widen `flash_window_s`.
+
+### Confidence
+
+A reading is `degraded`, and its state forced to `unknown`, when either:
+
+* **Warming up** — the rolling window does not yet hold a full `flash_window_s`. Nothing
+  commits during warm-up, so a restart never publishes a spurious `unknown` that means
+  only "started a moment ago".
+* **The dark reference is bright** — see below. This one *does* commit, because a bumped
+  camera is news.
+
+The dark reference only trips when it stays bright, not on a single frame: a reflection
+or a passing torch is not a moved camera. Raw brightness values stay in the payload
+throughout, so a degraded node can be diagnosed without shelling into it.
+
 ## Camera abstraction
 
 | Source | Use |
@@ -196,10 +268,12 @@ documented as those steps land.
 ```
 src/stacklight/
   config.py          strict YAML parsing, validation, state resolution
+  detector.py        rolling-window mode classification, debounce, commit
+  metrics.py         ROI -> one brightness number (the hot path)
   types.py           SegmentMode / Confidence vocabulary
   clock.py           real and virtual clocks
   logging_setup.py   structured text/JSON logging
-  cli.py             validate / states / synth
+  cli.py             validate / states / synth / detect
   sources/
     base.py          FrameSource interface, Frame, CameraControls
     synthetic.py     programmatic frames, scriptable

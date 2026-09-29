@@ -21,11 +21,7 @@ setup:
 	$(UV) sync --extra dev
 
 dev:
-	$(UV) run stacklight validate $(CONFIG)
-	@echo
-	@echo "The node runtime lands in the next step. For now, inspect the config:"
-	@echo "  $(UV) run stacklight states $(CONFIG)"
-	@echo "  $(UV) run stacklight synth $(CONFIG) --mode red=flashing --frames 20"
+	$(UV) run stacklight detect $(CONFIG) --demo --fast
 
 test:
 	$(UV) run pytest

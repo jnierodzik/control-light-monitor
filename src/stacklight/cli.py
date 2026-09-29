@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import NodeConfig, load_config, resolve_state
+from .detector import Detector, Reading, detection_latency_bounds
 from .errors import StackLightError
 from .logging_setup import configure_logging
 from .types import UNKNOWN_STATE, SegmentMode
@@ -20,6 +21,7 @@ from .types import UNKNOWN_STATE, SegmentMode
 
 def _describe(config: NodeConfig) -> str:
     lens = config.camera.lens_position if config.camera.lens_position is not None else "auto"
+    best, worst = detection_latency_bounds(config.detection)
     lines = [
         f"node_id:     {config.node_id}",
         f"config:      {config.path}",
@@ -29,6 +31,9 @@ def _describe(config: NodeConfig) -> str:
         f"awb {'on' if config.camera.awb_enable else 'off'}  "
         f"lens {lens}",
         f"metric:      {config.detection.metric}",
+        f"latency:     {best:.1f}-{worst:.1f}s from light change to committed state "
+        f"(window {config.detection.flash_window_s:g}s + debounce "
+        f"{config.detection.debounce_s:g}s)",
         f"mqtt:        {config.mqtt.host}:{config.mqtt.port} -> {config.state_topic}",
         "segments:",
     ]
@@ -110,6 +115,97 @@ def _cmd_synth(args: argparse.Namespace) -> int:
     return 0
 
 
+#: A scripted sequence that exercises every branch of the engine, for --demo.
+_DEMO_SCRIPT = [
+    ("all off", 4.0, {}),
+    ("steady green", 5.0, {"green": SegmentMode.STEADY}),
+    ("flashing red", 5.0, {"red": SegmentMode.FLASHING}),
+    ("steady red", 5.0, {"red": SegmentMode.STEADY}),
+    ("all off", 4.0, {}),
+]
+
+
+def _reading_row(reading: Reading, names: tuple[str, ...], t0: float) -> str:
+    values = "  ".join(f"{reading.segments[n].value:6.1f}" for n in names)
+    modes = " ".join(f"{reading.segments[n].mode.value:<8}" for n in names)
+    dark = "    -" if reading.dark_reference is None else f"{reading.dark_reference.value:5.1f}"
+    conf = reading.confidence.value
+    if reading.reasons:
+        conf += "(" + ",".join(reading.reasons) + ")"
+    return (
+        f"{reading.t - t0:7.2f}  {values}  {dark}  | {modes} | "
+        f"{reading.candidate_state:<9} {reading.state or '-':<9} {conf}"
+    )
+
+
+def _cmd_detect(args: argparse.Namespace) -> int:
+    """Run the detection engine and print what it sees.
+
+    This is the tuning tool: watch the raw brightness numbers next to the mode each
+    segment resolves to, and see exactly when a state commits.
+    """
+    from .clock import VirtualClock
+    from .sources import create_source
+    from .sources.synthetic import ScriptStep, SyntheticSource
+
+    config = load_config(args.config)
+    # --fast drives the source from a virtual clock, so a 25-second sequence finishes
+    # immediately instead of taking 25 seconds.
+    clock = VirtualClock() if args.fast else None
+    source = create_source(config, override=args.source, clock=clock)
+    if args.fast and not isinstance(source, SyntheticSource):
+        print("error: --fast only makes sense for a synthetic source", file=sys.stderr)
+        return 2
+
+    if args.demo:
+        if not isinstance(source, SyntheticSource):
+            print(
+                "error: --demo needs a synthetic source (pass --source synthetic)", file=sys.stderr
+            )
+            return 2
+        source.set_script(
+            [ScriptStep(seconds, modes) for _, seconds, modes in _DEMO_SCRIPT], loop=False
+        )
+        print("demo script:")
+        offset = 0.0
+        for label, seconds, _ in _DEMO_SCRIPT:
+            print(f"  t={offset:5.1f}s  {label}")
+            offset += seconds
+        print()
+
+    names = config.segment_names
+    best, worst = detection_latency_bounds(config.detection)
+    print(f"expected latency {best:.1f}-{worst:.1f}s after each light change\n")
+    header_values = "  ".join(f"{n:>6}" for n in names)
+    header_modes = " ".join(f"{n:<8}" for n in names)
+    header = (
+        f"{'t':>7}  {header_values}   dark  | {header_modes} | "
+        f"{'candidate':<9} {'state':<9} confidence"
+    )
+    print(header)
+    print("-" * len(header))
+
+    detector = Detector(config)
+    every = max(1, round(config.camera.fps * args.interval))
+    frames = args.frames if args.frames else round(args.seconds * config.camera.fps)
+
+    t0: float | None = None
+    with source:
+        if args.mode:
+            for spec in args.mode:
+                name, _, mode = spec.partition("=")
+                source.set_mode(name.strip(), SegmentMode(mode.strip()))
+        for frame in source.frames(limit=frames):
+            reading = detector.update(frame)
+            if t0 is None:
+                t0 = reading.t
+            if reading.changed:
+                print(f"{_reading_row(reading, names, t0)}   <-- COMMITTED {reading.state}")
+            elif frame.seq % every == 0:
+                print(_reading_row(reading, names, t0))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="stacklight", description=__doc__)
     parser.add_argument("--version", action="version", version=f"stacklight {__version__}")
@@ -135,6 +231,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="force a segment mode, e.g. --mode red=flashing (repeatable)",
     )
     p_synth.set_defaults(func=_cmd_synth)
+
+    p_detect = sub.add_parser("detect", help="run the detection engine and print readings")
+    p_detect.add_argument("config")
+    p_detect.add_argument(
+        "--source",
+        choices=["picamera", "file", "synthetic"],
+        default=None,
+        help="override camera.source from the config",
+    )
+    p_detect.add_argument(
+        "--demo",
+        action="store_true",
+        help="drive a synthetic source through a scripted light sequence",
+    )
+    p_detect.add_argument(
+        "--fast",
+        action="store_true",
+        help="run a synthetic source on a virtual clock, as fast as possible",
+    )
+    p_detect.add_argument("--seconds", type=float, default=25.0)
+    p_detect.add_argument("--frames", type=int, default=None)
+    p_detect.add_argument(
+        "--interval",
+        type=float,
+        default=1.0,
+        help="seconds between status lines (transitions always print)",
+    )
+    p_detect.add_argument("--mode", action="append", metavar="SEGMENT=MODE")
+    p_detect.set_defaults(func=_cmd_detect)
     return parser
 
 
