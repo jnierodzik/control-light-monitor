@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import logging
 import sys
 from pathlib import Path
 
@@ -206,6 +207,64 @@ def _cmd_detect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_node(args: argparse.Namespace) -> int:
+    """Run the node: capture, detect, publish to MQTT."""
+    import signal
+
+    from .node import Node, availability_will
+    from .publisher import MqttPublisher, Publisher, RecordingPublisher
+    from .sources import create_source
+
+    config = load_config(args.config)
+    configure_logging(args.log_level or config.logging.level, config.logging.format)
+    log = logging.getLogger("stacklight.node")
+    source = create_source(config, override=args.source)
+
+    node: Node
+    publisher: Publisher
+    if args.dry_run:
+        print(f"dry run: nothing will be sent to {config.mqtt.host}:{config.mqtt.port}")
+        publisher = RecordingPublisher()
+    else:
+        publisher = MqttPublisher(
+            config,
+            will=availability_will(config),
+            # A transition published into a dead socket is gone, and the broker's
+            # retained copy is stale until something replaces it.
+            on_reconnect=lambda: node.republish_state(),
+        )
+    node = Node(config, source, publisher)
+
+    def handle_signal(signum: int, _frame: object) -> None:
+        log.info("shutting down", extra={"signal": signal.Signals(signum).name})
+        node.stop()
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    with publisher:
+        if isinstance(publisher, MqttPublisher) and not publisher.wait_until_connected(
+            args.connect_timeout
+        ):
+            # Not fatal: the broker may come up later, and a node that samples the light
+            # and keeps retrying is more useful than one that exits.
+            log.warning(
+                "broker not reachable yet, continuing and retrying in the background",
+                extra={"host": config.mqtt.host, "port": config.mqtt.port},
+            )
+        with node:
+            node.run(max_frames=args.frames, max_seconds=args.seconds)
+
+    if isinstance(publisher, RecordingPublisher):
+        counts: dict[str, int] = {}
+        for message in publisher.messages:
+            counts[message.topic] = counts.get(message.topic, 0) + 1
+        print(f"\ndry run published {len(publisher.messages)} message(s):")
+        for topic, count in sorted(counts.items()):
+            print(f"  {count:5d}  {topic}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="stacklight", description=__doc__)
     parser.add_argument("--version", action="version", version=f"stacklight {__version__}")
@@ -260,6 +319,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_detect.add_argument("--mode", action="append", metavar="SEGMENT=MODE")
     p_detect.set_defaults(func=_cmd_detect)
+
+    p_node = sub.add_parser("node", help="run the node: capture, detect, publish")
+    p_node.add_argument("config")
+    p_node.add_argument(
+        "--source",
+        choices=["picamera", "file", "synthetic"],
+        default=None,
+        help="override camera.source from the config",
+    )
+    p_node.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="run the full pipeline but record publishes instead of sending them",
+    )
+    p_node.add_argument("--frames", type=int, default=None, help="stop after N frames")
+    p_node.add_argument("--seconds", type=float, default=None, help="stop after N seconds")
+    p_node.add_argument("--connect-timeout", type=float, default=5.0)
+    p_node.set_defaults(func=_cmd_node)
     return parser
 
 
@@ -271,6 +348,11 @@ def main(argv: list[str] | None = None) -> int:
     except StackLightError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+
+def node_main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``stacklight-node`` console script and the systemd unit."""
+    return main(["node", *(argv if argv is not None else sys.argv[1:])])
 
 
 if __name__ == "__main__":

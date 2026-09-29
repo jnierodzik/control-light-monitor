@@ -37,11 +37,18 @@ deploying another node with its own config file and changing nothing centrally.
 
 Topics, namespaced per node id:
 
-| Topic | Payload |
-| --- | --- |
-| `shop/lights/<node_id>/state` | Retained JSON; published on committed transitions and refreshed periodically |
-| `shop/lights/<node_id>/health` | Heartbeat with uptime, frame rate, per-segment raw brightness |
-| `shop/lights/<node_id>/snapshot` | Occasional JPEG for debugging, rate limited |
+| Topic | Retain | QoS | Payload |
+| --- | --- | --- | --- |
+| `shop/lights/<node_id>/state` | yes | 1 | JSON; published on committed transitions and refreshed every `state_refresh_s` |
+| `shop/lights/<node_id>/health` | no | 0 | Heartbeat with uptime, frame rate, per-segment raw brightness |
+| `shop/lights/<node_id>/snapshot` | yes | 0 | Annotated debug JPEG; on every transition, plus rate-limited routine ones |
+| `shop/lights/<node_id>/availability` | yes | 1 | `online` / `offline`, also registered as the MQTT last will |
+
+`availability` is not in the original design and is the one topic I added. The rules
+engine's 60s heartbeat timeout is the backstop for a dead node, but a last will flips
+this topic to `offline` the moment the broker notices the socket is gone — seconds
+instead of a minute. Both paths matter: the will does not fire if the broker itself
+dies, so the heartbeat timeout still earns its place.
 
 ## Build status
 
@@ -49,7 +56,7 @@ This project is being built in reviewable steps.
 
 - [x] **1. Skeleton, config, `FrameSource` + `SyntheticSource`**
 - [x] **2. Detection engine (ROI sampling, flash detection, debounce, state resolution)**
-- [ ] 3. MQTT publisher, heartbeats, retained state
+- [x] **3. MQTT publisher, heartbeats, retained state**
 - [ ] 4. Calibration web UI
 - [ ] 5. Rules engine, ntfy, SQLite logging, watchdog
 - [ ] 6. `PiCameraSource`, systemd units, deployment
@@ -73,6 +80,12 @@ seconds of wall time:
 
 ```bash
 make dev
+```
+
+Run the whole node pipeline — capture, detect, publish — without touching a broker:
+
+```bash
+make dry-run
 ```
 
 Inspect a config without any hardware:
@@ -159,6 +172,61 @@ answer.
 `value` is the default precisely because it is hue-independent: a saturated red segment
 and a saturated green segment both read near 255, so one threshold works for both. A
 plain RGB average would put a fully lit red segment at ~85 — *below* a threshold of 90.
+
+## What the node publishes
+
+State, on every committed transition and as a periodic retained refresh:
+
+```json
+{
+  "node_id": "machine1",
+  "state": "fault",
+  "segments": {
+    "red":   {"mode": "steady", "value": 213.5, "threshold": 90.0, "lit": true,  "duty": 1.0},
+    "green": {"mode": "off",    "value": 4.8,   "threshold": 90.0, "lit": false, "duty": 0.0}
+  },
+  "since": "2026-09-01T14:22:03Z",
+  "confidence": "ok",
+  "reasons": [],
+  "ts": "2026-09-01T14:23:03Z",
+  "seq": 18503
+}
+```
+
+`since` is when the pattern first appeared, not when debounce expired, so dwell times
+computed from it reflect the machine rather than the monitor. `ts` is when this
+particular payload was built, so a stale retained message is recognisable as stale.
+
+The health heartbeat adds `uptime_s`, `fps`, `fps_configured`, `frames`, `metric`,
+`source`, `version`, the dark reference reading, and per-segment `transitions` and
+`settled` — the detail needed to tune `flash_window_s` without shelling into the node.
+`fps` is `null` rather than `0.0` on the very first heartbeat, so "not measurable yet"
+cannot be mistaken for a stalled camera.
+
+### Snapshots
+
+A raw underexposed frame is almost entirely black and makes a poor debug image, so
+snapshots are optionally annotated — each ROI outlined and labelled with its measured
+value, coloured by lit/unlit, with the dark reference in magenta and a header carrying
+state and confidence. A misaligned ROI becomes obvious at a glance instead of something
+to infer from numbers. `snapshot_gain` brightens the JPEG only; the detector always sees
+the untouched frame.
+
+One snapshot goes out on every committed transition regardless of the rate limit, so a
+push notification carries an image of the state that actually triggered it rather than
+one from minutes earlier. Debounce already caps transitions at one per `debounce_s`, so
+that cannot run away. One is also published at startup, to confirm camera aim on a fresh
+deploy without waiting for the light to change.
+
+### Failure behaviour
+
+The camera is the thing that cannot be paused, so paho owns the socket on its own thread
+and publishes fail fast rather than stalling the capture loop. A node whose broker is
+down keeps sampling and detecting; state publishes that fail are marked pending and
+retried on the next frame, and the reconnect callback resends the retained state so the
+broker's copy is never left stale. A broker that is unreachable at startup is a warning,
+not a fatal error — it may come up later, and a node that samples and retries is more
+useful than one that exits.
 
 ## Detection
 
@@ -270,10 +338,14 @@ src/stacklight/
   config.py          strict YAML parsing, validation, state resolution
   detector.py        rolling-window mode classification, debounce, commit
   metrics.py         ROI -> one brightness number (the hot path)
+  node.py            the capture-detect-publish loop
+  publisher.py       Publisher interface, paho client, recording stand-in
+  payloads.py        MQTT JSON documents
+  snapshot.py        annotated debug JPEG encoding
   types.py           SegmentMode / Confidence vocabulary
   clock.py           real and virtual clocks
   logging_setup.py   structured text/JSON logging
-  cli.py             validate / states / synth / detect
+  cli.py             validate / states / synth / detect / node
   sources/
     base.py          FrameSource interface, Frame, CameraControls
     synthetic.py     programmatic frames, scriptable

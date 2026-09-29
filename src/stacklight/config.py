@@ -261,6 +261,15 @@ class PublishConfig:
     snapshot_min_interval_s: float = 300.0
     snapshot_quality: int = 70
     snapshot_max_width: int = 640
+    #: Publish a snapshot on every committed transition, bypassing the rate limit, so a
+    #: notification carries an image of the state that actually triggered it rather than
+    #: whatever happened to be captured minutes earlier.
+    snapshot_on_transition: bool = True
+    #: Outline each ROI and print its measured value on the snapshot.
+    snapshot_annotate: bool = True
+    #: Brightness multiplier applied to snapshots only. The detector never sees this.
+    #: Raise it to make the scene around the LEDs visible when checking camera aim.
+    snapshot_gain: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -344,6 +353,15 @@ class NodeConfig:
     @property
     def snapshot_topic(self) -> str:
         return f"{self.mqtt.base_topic}/{self.node_id}/snapshot"
+
+    @property
+    def availability_topic(self) -> str:
+        """Retained online/offline flag, also registered as the MQTT last will.
+
+        The heartbeat timeout in the rules engine is the backstop; this is the fast
+        path, so a node that dies is noticed in seconds rather than in a minute.
+        """
+        return f"{self.mqtt.base_topic}/{self.node_id}/availability"
 
     def resolve_state(self, observed: Mapping[str, SegmentMode]) -> str:
         """Name the state for an observed segment pattern, or ``"unknown"``."""
@@ -657,6 +675,9 @@ def _parse_publish(data: Any, path: str) -> PublishConfig:
         "snapshot_min_interval_s",
         "snapshot_quality",
         "snapshot_max_width",
+        "snapshot_on_transition",
+        "snapshot_annotate",
+        "snapshot_gain",
     )
     _reject_unknown(data, allowed, path)
     return PublishConfig(
@@ -679,6 +700,15 @@ def _parse_publish(data: Any, path: str) -> PublishConfig:
             f"{path}.snapshot_max_width",
             integer=True,
             minimum=32,
+        ),
+        snapshot_on_transition=_boolean(
+            data.get("snapshot_on_transition", True), f"{path}.snapshot_on_transition"
+        ),
+        snapshot_annotate=_boolean(
+            data.get("snapshot_annotate", True), f"{path}.snapshot_annotate"
+        ),
+        snapshot_gain=_number(
+            data.get("snapshot_gain", 1.0), f"{path}.snapshot_gain", minimum=0.1, maximum=64
         ),
     )
 

@@ -48,6 +48,17 @@ states:
   attention: {red: flashing}
   idle:      {red: "off",    green: "off"}
 
+publish:
+  heartbeat_s: 15              # health topic cadence; the rules watchdog keys off this
+  state_refresh_s: 60          # retained state resent this often even without a change
+  snapshot_min_interval_s: 300 # floor between routine snapshots
+  snapshot_on_transition: true # plus one on every committed transition, rate limit or not,
+                               # so a notification carries the state that triggered it
+  snapshot_annotate: true      # outline each ROI and print its measured value
+  snapshot_gain: 1.0           # brightens the debug JPEG only; the detector never sees it
+  snapshot_max_width: 640
+  snapshot_quality: 70
+
 logging:
   level: DEBUG
   format: text

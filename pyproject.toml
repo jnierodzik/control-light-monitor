@@ -22,6 +22,7 @@ opencv = ["opencv-python-headless>=4.9"]
 
 [project.scripts]
 stacklight = "stacklight.cli:main"
+stacklight-node = "stacklight.cli:node_main"
 
 [build-system]
 requires = ["hatchling"]

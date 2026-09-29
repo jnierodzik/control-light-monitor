@@ -4,11 +4,13 @@
 CONFIG ?= config/dev-synthetic.yaml
 UV     ?= uv
 
-.PHONY: help setup dev test lint fmt calibrate deploy clean
+.PHONY: help setup dev dry-run node test lint fmt calibrate deploy clean
 
 help:
 	@echo "setup      install the dev environment (uv, Python 3.11)"
-	@echo "dev        run the node against $(CONFIG)"
+	@echo "dev        run the detection engine against $(CONFIG) on a demo script"
+	@echo "dry-run    run the full node pipeline without touching a broker"
+	@echo "node       run the node for real (needs a broker)"
 	@echo "test       run the test suite"
 	@echo "lint       ruff check + format check"
 	@echo "fmt        ruff format + autofix"
@@ -22,6 +24,13 @@ setup:
 
 dev:
 	$(UV) run stacklight detect $(CONFIG) --demo --fast
+
+# Runs the full node pipeline, recording publishes instead of sending them.
+dry-run:
+	$(UV) run stacklight node $(CONFIG) --dry-run --seconds 20
+
+node:
+	$(UV) run stacklight node $(CONFIG)
 
 test:
 	$(UV) run pytest
