@@ -199,6 +199,65 @@ questions in the detection tuning.
 
 ---
 
+## Bench verification — recorded 2026-09-30
+
+Hardware confirmed working before mounting. Pi 5 Model B Rev 1.1, Debian 13 (trixie),
+kernel 6.18.50, user `jnierodzik`, hostname `stacklight`, 10.168.168.153.
+
+* Camera detected: `imx708`. Cable orientation correct.
+* 29.6°C idle with `throttled=0x0` — no undervoltage, and ample thermal headroom, which
+  is what justifies running the Active Cooler with its fan unplugged once boxed.
+* Root filesystem expanded to 29 GB; 1.8 GB of 2 GB RAM free.
+
+### Two gotchas found on the bench
+
+**`.local` resolves to IPv6 link-local first**, which carries no scope id, so plain
+`ssh stacklight.local` fails with "No route to host". Everything in the Makefile forces
+IPv4 via `SSH = ssh -4`. Do the same by hand:
+
+```bash
+ssh -4 jnierodzik@stacklight.local
+```
+
+**Wi-Fi power saving adds latency** — the first ping measured 707ms. Harmless for a
+laptop, not for a node whose heartbeats are a watchdog signal. Turn it off:
+
+```bash
+nmcli -g GENERAL.CONNECTION device show wlan0          # find the connection name
+sudo nmcli connection modify "<name>" 802-11-wireless.powersave 2
+sudo systemctl restart NetworkManager
+```
+
+Also worth reserving the Pi's address in the router's DHCP table, so the node does not
+move.
+
+### The sensor mode determines field of view — pin it
+
+`rpicam-hello --list-cameras` reports, for the IMX708:
+
+| Mode | Sensor window | Field of view |
+| --- | --- | --- |
+| 1536×864 @ 120fps | **(768, 432)/3072×1728 — cropped** | ~47° × 28° |
+| 2304×1296 @ 56fps | (0,0)/4608×2592 — full | 66° × 41° |
+| 4608×2592 @ 14fps | (0,0)/4608×2592 — full | 66° × 41° |
+
+A 1280×720 request would most likely land on the **cropped** 1536×864 mode. That is not
+a problem in itself — a narrower field puts more pixels on the segments — but it must be
+pinned in config, because a mode change silently moves the field of view and invalidates
+every calibrated ROI.
+
+Vertical is the binding dimension, since the segments stack vertically:
+
+| Mode | Distance to frame a 15 cm tall light |
+| --- | --- |
+| 1536×864 (cropped) | ~30 cm |
+| 2304×1296 (full) | ~20 cm |
+
+Both clear the IMX708's 10 cm minimum focus. **Measure the lit height of the machine's
+stack light before printing the arm** — that number picks the distance and the mode.
+
+---
+
 ## 5. Install the node software
 
 All of this is driven from the Mac. Substitute your hostname, username and node name:

@@ -55,41 +55,45 @@ calibrate:
 # Deployment. Override the target on the command line:
 #   make deploy PI=stacklight.local PI_USER=jesse NODE=machine1
 PI      ?= stacklight.local
-PI_USER ?= pi
+PI_USER ?= jnierodzik
 NODE    ?= machine1
 REMOTE  ?= $(PI_USER)@$(PI)
+# -4 is not optional: <host>.local resolves to an IPv6 link-local address first, which
+# carries no scope id and so fails with "No route to host".
+SSH     ?= ssh -4
+SCP     ?= scp -4
 
 # One-time setup on a fresh Pi: system packages, directories, and the venv that can see
 # apt's picamera2.
 bootstrap:
-	ssh $(REMOTE) 'sudo apt update && sudo apt install -y python3-picamera2 python3-venv rsync'
-	ssh $(REMOTE) 'sudo mkdir -p /opt/stacklight /etc/stacklight && sudo chown -R $(PI_USER) /opt/stacklight /etc/stacklight'
-	ssh $(REMOTE) 'cd /opt/stacklight && python3 -m venv --system-site-packages .venv'
+	$(SSH) $(REMOTE) 'sudo apt update && sudo apt install -y python3-picamera2 python3-venv rsync'
+	$(SSH) $(REMOTE) 'sudo mkdir -p /opt/stacklight /etc/stacklight && sudo chown -R $(PI_USER) /opt/stacklight /etc/stacklight'
+	$(SSH) $(REMOTE) 'cd /opt/stacklight && python3 -m venv --system-site-packages .venv'
 	@echo
 	@echo "Now: make deploy PI=$(PI) PI_USER=$(PI_USER) NODE=$(NODE)"
 
 deploy:
-	rsync -az --delete --exclude '.venv' --exclude '.git' --exclude '__pycache__' 		--exclude 'samples' --exclude '.pytest_cache' --exclude '.ruff_cache' 		./ $(REMOTE):/opt/stacklight/
-	ssh $(REMOTE) '/opt/stacklight/.venv/bin/pip install -q -e /opt/stacklight'
-	scp config/$(NODE).yaml $(REMOTE):/etc/stacklight/$(NODE).yaml
-	ssh $(REMOTE) 'sudo cp /opt/stacklight/systemd/stacklight-node@.service /etc/systemd/system/ && sudo systemctl daemon-reload'
-	ssh $(REMOTE) '/opt/stacklight/.venv/bin/stacklight validate /etc/stacklight/$(NODE).yaml'
+	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' --exclude '__pycache__' 		--exclude 'samples' --exclude '.pytest_cache' --exclude '.ruff_cache' 		./ $(REMOTE):/opt/stacklight/
+	$(SSH) $(REMOTE) '/opt/stacklight/.venv/bin/pip install -q -e /opt/stacklight'
+	$(SCP) config/$(NODE).yaml $(REMOTE):/etc/stacklight/$(NODE).yaml
+	$(SSH) $(REMOTE) 'sudo cp /opt/stacklight/systemd/stacklight-node@.service /etc/systemd/system/ && sudo systemctl daemon-reload'
+	$(SSH) $(REMOTE) '/opt/stacklight/.venv/bin/stacklight validate /etc/stacklight/$(NODE).yaml'
 	@echo
 	@echo "Deployed. Start it with:"
-	@echo "  ssh $(REMOTE) 'sudo systemctl enable --now stacklight-node@$(NODE)'"
+	@echo "  $(SSH) $(REMOTE) 'sudo systemctl enable --now stacklight-node@$(NODE)'"
 
 # Follow the node's log on the Pi.
 logs:
-	ssh $(REMOTE) 'journalctl -u stacklight-node@$(NODE) -f -n 50'
+	$(SSH) $(REMOTE) 'journalctl -u stacklight-node@$(NODE) -f -n 50'
 
 restart:
-	ssh $(REMOTE) 'sudo systemctl restart stacklight-node@$(NODE)'
+	$(SSH) $(REMOTE) 'sudo systemctl restart stacklight-node@$(NODE)'
 
 # Capture a locked, underexposed frame straight from the camera and bring it back, to
 # check aim and exposure without any of this project's code involved.
 probe:
-	ssh $(REMOTE) 'rpicam-still -o /tmp/probe.jpg --width 1280 --height 720 --shutter 800 --gain 1.0 --awb off --denoise off --immediate'
-	scp $(REMOTE):/tmp/probe.jpg /tmp/probe.jpg
+	$(SSH) $(REMOTE) 'rpicam-still -o /tmp/probe.jpg --width 1280 --height 720 --shutter 800 --gain 1.0 --awb off --denoise off --immediate'
+	$(SCP) $(REMOTE):/tmp/probe.jpg /tmp/probe.jpg
 	@echo "wrote /tmp/probe.jpg"
 
 clean:

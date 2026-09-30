@@ -17,9 +17,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Change this if you chose a different username when flashing the card. The video group
-# is what grants access to the camera devices; without it libcamera finds nothing.
-User=pi
+# Must match the username chosen when flashing the card. The video group is what grants
+# access to the camera devices; without it libcamera finds nothing.
+User=jnierodzik
 SupplementaryGroups=video
 
 WorkingDirectory=/opt/stacklight
