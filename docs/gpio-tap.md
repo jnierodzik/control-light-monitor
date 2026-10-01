@@ -1,8 +1,15 @@
 # Reading the stack light electrically
 
 A second sensor for the same machine: instead of watching the light with a camera, read
-the wires that drive it. The camera stays — running both and cross-checking them is the
-plan, not a transition.
+the wires that drive it.
+
+> **Hard constraint: the tap node is camera-agnostic and must work with no camera at
+> all.** Not a camera plus a tap — a complete, standalone monitor. No camera hardware, no
+> camera config section, no `picamera2`, no calibration step. A Pi with an optocoupler
+> board and nothing else must be a working node.
+>
+> Running a camera node alongside it is *optional* and useful for validation, but nothing
+> in the tap's design may depend on one existing.
 
 **Status:** hardware identified, parts ordered, pipeline refactored and proven
 sensor-agnostic. Not yet wired or implemented.
@@ -123,9 +130,28 @@ SQLite, ntfy — is untouched and shared.
 
 ### Deployment shape
 
-Two nodes, one broker. `stacklight` and `machine1`, same `shop/lights/` namespace, both
-feeding the same rules engine. That was already the design for a second camera; a second
-*sensor* costs nothing extra.
+`machine1` is a complete node on its own: optocoupler board, Pi, broker, rules engine,
+notifications. No camera anywhere in the chain.
+
+Running `stacklight` alongside it is optional. Both publish into the same
+`shop/lights/` namespace and feed the same rules engine, so a second node costs nothing
+structurally — but the tap must never *require* it.
+
+When both are running, cross-check on **per-segment modes for red and green**, not on
+resolved state names. The two nodes may legitimately have different segment sets (the
+camera cannot see the buzzer), so comparing what each sensor *measured* is both more
+meaningful and more robust than comparing what their configs *concluded*.
+
+### What standalone requires in the code
+
+* `camera:` becomes optional in config, required only when `sensor: camera`. It is
+  currently mandatory, so this is a real change.
+* `Node` must run without a `FrameSource`. Snapshot publishing becomes camera-only and
+  skips cleanly rather than erroring.
+* No `picamera2` and no snapshot encoding on the import path for a GPIO node.
+* The GPIO path's tests must not reach for `SyntheticSource`. (They already don't —
+  `drive_pins` in `tests/test_sensor_agnostic.py` feeds the detector directly. Only the
+  explicit camera-versus-tap comparison test uses a camera, which is correct.)
 
 ### Pi 5 GPIO gotcha
 
@@ -185,14 +211,16 @@ Options:
 * **Tap +24V as a fourth channel.** Needs access to the supply rail inside the control
   box, which is more invasive than the light connector. Gives a true presence signal,
   and the spare opto channel is already there for it.
-* **Accept it**, and lean on the camera node as the cross-check — if the camera says
-  `running` while the tap says `idle`, something is wrong with the tap.
-* **Infer it**: if the machine genuinely never sits with both lamps dark while powered,
-  then "all inputs inactive" *is* "powered down" and there is nothing to fix. Needs
-  observation of the real machine to confirm.
+* **Power the Pi from the machine's 24V** through a buck converter. Machine off → node
+  off → the rules engine's heartbeat watchdog fires. Elegant, but the Pi then reboots on
+  every power cycle, and "machine off" becomes indistinguishable from "monitor died".
+* **Establish that it cannot happen**: if the machine never sits with every channel dark
+  while powered, then "all inputs inactive" unambiguously *means* powered-down or
+  disconnected, and becomes a legitimate alertable state rather than an ambiguity. Costs
+  nothing but observation.
 
-Worth resolving before the tap becomes the primary sensor. Until then the camera covers
-it.
+Deferring to a camera node is **not** an option — see the standalone constraint above.
+This has to be solved within the tap.
 
 ## Bench plan
 
