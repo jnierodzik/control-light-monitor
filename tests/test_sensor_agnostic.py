@@ -92,7 +92,7 @@ def test_flash_classification_works_on_pin_samples(config):
     """The duty-cycle machinery is not camera-specific. A pulsed lamp lead reads as
     flashing for exactly the same reasons a blinking LED does."""
     readings = drive_pins(config, [(3.0, all_off), (6.0, red_flashing())])
-    settled = [r for r in readings if r.t > 8.0][0]
+    settled = next(r for r in readings if r.t > 8.0)
     assert settled.segments["red"].mode is FLASHING
     assert settled.segments["red"].duty == pytest.approx(0.5, abs=0.05)
     assert settled.segments["red"].transitions >= 2
@@ -103,8 +103,8 @@ def test_a_faster_sample_rate_sharpens_the_duty_cycle(config):
     better than 15fps of video, so duty cycle lands much closer to the truth."""
     at_15 = drive_pins(config, [(3.0, all_off), (6.0, red_flashing())], hz=15.0)
     at_200 = drive_pins(config, [(3.0, all_off), (6.0, red_flashing())], hz=200.0)
-    error_15 = abs([r for r in at_15 if r.t > 8.0][0].segments["red"].duty - 0.5)
-    error_200 = abs([r for r in at_200 if r.t > 8.0][0].segments["red"].duty - 0.5)
+    error_15 = abs(next(r for r in at_15 if r.t > 8.0).segments["red"].duty - 0.5)
+    error_200 = abs(next(r for r in at_200 if r.t > 8.0).segments["red"].duty - 0.5)
     assert error_200 <= error_15
 
 

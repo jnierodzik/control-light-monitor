@@ -306,6 +306,37 @@ class CalibrationConfig:
 
 
 @dataclass(frozen=True)
+class ModeSet:
+    """The set of segment modes that satisfy one state constraint.
+
+    Usually a single mode. The exception is ``on``, which matches ``steady`` or
+    ``flashing`` -- for an annunciator where red means "error" whether it is solid or
+    blinking, depending on which would be depending on a distinction that may not exist.
+    """
+
+    modes: frozenset[SegmentMode]
+    #: The token written in the config, kept for error messages and display.
+    label: str
+
+    def matches(self, mode: SegmentMode | None) -> bool:
+        return mode in self.modes
+
+    def __str__(self) -> str:
+        return self.label
+
+
+#: Tokens accepted on the right-hand side of a state constraint.
+MODE_TOKENS: dict[str, ModeSet] = {
+    SegmentMode.OFF.value: ModeSet(frozenset({SegmentMode.OFF}), SegmentMode.OFF.value),
+    SegmentMode.STEADY.value: ModeSet(frozenset({SegmentMode.STEADY}), SegmentMode.STEADY.value),
+    SegmentMode.FLASHING.value: ModeSet(
+        frozenset({SegmentMode.FLASHING}), SegmentMode.FLASHING.value
+    ),
+    "on": ModeSet(frozenset({SegmentMode.STEADY, SegmentMode.FLASHING}), "on"),
+}
+
+
+@dataclass(frozen=True)
 class StateSpec:
     """A named state, defined as constraints on some or all segments.
 
@@ -314,14 +345,14 @@ class StateSpec:
     """
 
     name: str
-    constraints: Mapping[str, SegmentMode]
+    constraints: Mapping[str, ModeSet]
 
     @property
     def specificity(self) -> int:
         return len(self.constraints)
 
     def matches(self, observed: Mapping[str, SegmentMode]) -> bool:
-        return all(observed.get(seg) is mode for seg, mode in self.constraints.items())
+        return all(allowed.matches(observed.get(seg)) for seg, allowed in self.constraints.items())
 
 
 @dataclass(frozen=True)
@@ -753,11 +784,19 @@ def _parse_states(data: Any, path: str, segment_names: Sequence[str]) -> tuple[S
             )
         _reject_unknown(constraints_raw, segment_names, item_path)
 
-        constraints: dict[str, SegmentMode] = {}
+        constraints: dict[str, ModeSet] = {}
         for seg, mode_raw in constraints_raw.items():
             mode_path = f"{item_path}.{seg}"
-            mode = _string(mode_raw, mode_path, choices=[m.value for m in SegmentMode])
-            constraints[seg] = SegmentMode(mode)
+            if isinstance(mode_raw, bool):
+                # YAML 1.1 reads bare on/off/yes/no as booleans, which is exactly the
+                # trap this field invites.
+                _fail(
+                    mode_path,
+                    f"got the boolean {mode_raw}. YAML reads unquoted on/off as "
+                    'booleans -- write "on" or "off" in quotes',
+                )
+            token = _string(mode_raw, mode_path, choices=sorted(MODE_TOKENS))
+            constraints[seg] = MODE_TOKENS[token]
         specs.append(StateSpec(name=name, constraints=constraints))
 
     # Two states with an identical constraint set can never be told apart.

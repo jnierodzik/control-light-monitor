@@ -125,6 +125,49 @@ Validation is strict: unknown keys are errors, not warnings, and ROIs are bounds
 checked against the configured resolution. A typo in a key name should not cost you an
 afternoon up a ladder.
 
+### What the machine's light actually means
+
+Worth stating plainly, because it is not what you would assume and it shaped the design:
+
+**The stack light is an annunciator, not a state indicator.** It is dark when the
+machine is powered off, when it is idle, *and while it is running*. Those three are
+indistinguishable — **"running" is not observable from this light at all**. It lights
+only to ask for attention, and latches until the operator acts:
+
+| Pattern | State | Meaning |
+| --- | --- | --- |
+| both dark | `clear` | nothing pending — off, idle, or mid-run |
+| red lit | `error` | an error occurred |
+| green lit | `done` | a run completed |
+
+A consequence for the history log: machine run time cannot be measured, so dwell time
+means something different from what you would expect. The dwell on a latched `error` is
+**how long the light sat waiting for the operator** — response time, not machine time.
+Throughput comes from counting `done` events and the interval between them, not from
+summing a running state.
+
+### The `on` mode
+
+Red means error whether it is solid or blinking. Rather than depend on knowing which,
+states match `on`, which accepts `steady` or `flashing`:
+
+```yaml
+states:
+  error: {red: "on"}                    # error wins if both were ever lit at once
+  done:  {red: "off", green: "on"}
+  clear: {red: "off", green: "off"}
+```
+
+The flash mode is still measured and published on every payload, so the blink behaviour
+is observable — it just isn't depended on. If flashing later turns out to mean something
+distinct from solid, splitting `error` in two is a one-line config change.
+
+Precedence is structural rather than ordered: `error` constrains only red while `done`
+requires red off, so there is no tie for the ambiguity checker to reject.
+
+> `"on"` and `"off"` must both be quoted. YAML 1.1 reads them bare as booleans. Config
+> load rejects the boolean with a message saying exactly this.
+
 ### Segments and states
 
 Segment names, ROIs and thresholds are entirely config-driven. Nothing in the code
