@@ -611,10 +611,18 @@ def _parse_segments(data: Any, path: str, sensor: str) -> tuple[SegmentConfig, .
 def _parse_gpio(data: Any, path: str) -> GpioConfig:
     data = _as_mapping(data, path)
     _reject_unknown(data, ("sample_hz", "active_low", "pull"), path)
+    active_low = _boolean(data.get("active_low", True), f"{path}.active_low")
+    pull = _string(data.get("pull", "up"), f"{path}.pull", choices=("up", "down", "none"))
+    # The two settings are not independent. An optocoupler that drags the pin low needs
+    # the pin resting high, or the pull fights the sensor and the input never changes.
+    if pull == "up" and not active_low:
+        _fail(f"{path}.pull", "'up' contradicts active_low: false; use pull: down")
+    if pull == "down" and active_low:
+        _fail(f"{path}.pull", "'down' contradicts active_low: true; use pull: up")
     return GpioConfig(
         sample_hz=_number(data.get("sample_hz", 100.0), f"{path}.sample_hz", minimum=1),
-        active_low=_boolean(data.get("active_low", True), f"{path}.active_low"),
-        pull=_string(data.get("pull", "up"), f"{path}.pull", choices=("up", "down", "none")),
+        active_low=active_low,
+        pull=pull,
     )
 
 

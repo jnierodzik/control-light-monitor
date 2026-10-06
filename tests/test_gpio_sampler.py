@@ -218,3 +218,125 @@ def test_an_error_that_outlives_the_buzzer_does_not_renotify():
     """The buzzer going quiet while red stays lit is not a new event."""
     readings = run_tap([(4.0, ()), (15.0, (17, 22)), (15.0, (17,)), (6.0, ())])
     assert [state for state, _ in commits(readings)] == ["clear", "error", "clear"]
+
+
+# -- the real gpiozero-backed reader -----------------------------------------------
+#
+# These exist because the bug they pin down got all the way to real hardware: the
+# fake reader bypassed GpiozeroPinReader entirely, so nothing tested the one piece
+# where polarity is actually decided.
+
+
+class FakeDigitalInputDevice:
+    def __init__(self, pin, pull_up=None, active_state=None):
+        self.pin = pin
+        self.pull_up = pull_up
+        self.active_state = active_state
+        self.closed = False
+        self.value = 0
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def fake_gpiozero(monkeypatch):
+    import sys
+    import types
+
+    created: list[FakeDigitalInputDevice] = []
+
+    def factory(pin, **kwargs):
+        device = FakeDigitalInputDevice(pin, **kwargs)
+        created.append(device)
+        return device
+
+    module = types.ModuleType("gpiozero")
+    module.DigitalInputDevice = factory
+    monkeypatch.setitem(sys.modules, "gpiozero", module)
+    return created
+
+
+def reader(fake_gpiozero, *, active_low=True, pull="up", pins=(17, 27)):
+    from stacklight.sources.gpio import GpiozeroPinReader
+
+    return GpiozeroPinReader(pins, active_low=active_low, pull=pull), fake_gpiozero
+
+
+def test_a_sinking_opto_is_configured_as_pull_up(fake_gpiozero):
+    _, devices = reader(fake_gpiozero, active_low=True, pull="up")
+    assert [d.pull_up for d in devices] == [True, True]
+    # active_state must be left alone: gpiozero derives it from the pull, and setting
+    # both is an error.
+    assert [d.active_state for d in devices] == [None, None]
+
+
+def test_a_sourcing_opto_is_configured_as_pull_down(fake_gpiozero):
+    _, devices = reader(fake_gpiozero, active_low=False, pull="down")
+    assert [d.pull_up for d in devices] == [False, False]
+
+
+def test_no_pull_requires_an_explicit_active_state(fake_gpiozero):
+    _, devices = reader(fake_gpiozero, active_low=True, pull="none")
+    assert devices[0].pull_up is None
+    assert devices[0].active_state is False  # active when low
+
+
+def test_an_unconnected_pull_up_input_reads_dark(fake_gpiozero):
+    """The regression. gpiozero's value already means "is active" once a pull is set,
+    so inverting it again reported every segment permanently lit with nothing even
+    wired up."""
+    pin_reader, devices = reader(fake_gpiozero, active_low=True, pull="up")
+    devices[0].value = 0  # nothing dragging the pin down
+    assert pin_reader.read(17) is False
+
+
+def test_an_energised_opto_reads_lit(fake_gpiozero):
+    pin_reader, devices = reader(fake_gpiozero, active_low=True, pull="up")
+    devices[0].value = 1  # opto sinking the pin
+    assert pin_reader.read(17) is True
+
+
+def test_closing_releases_every_pin(fake_gpiozero):
+    pin_reader, devices = reader(fake_gpiozero)
+    pin_reader.close()
+    assert all(d.closed for d in devices)
+
+
+def test_a_pin_that_cannot_be_claimed_releases_the_others(fake_gpiozero):
+    """Otherwise a restart loop leaves half the pins held by a dead process."""
+    import sys
+
+    claimed: list[FakeDigitalInputDevice] = []
+
+    def factory(pin, **kwargs):
+        if pin == 27:
+            raise RuntimeError("GPIO busy")
+        device = FakeDigitalInputDevice(pin, **kwargs)
+        claimed.append(device)
+        return device
+
+    sys.modules["gpiozero"].DigitalInputDevice = factory
+    from stacklight.sources.gpio import GpiozeroPinReader
+
+    with pytest.raises(SourceError, match="could not claim GPIO pins"):
+        GpiozeroPinReader((17, 27), active_low=True, pull="up")
+    assert claimed and all(d.closed for d in claimed)
+
+
+# -- config guards against the contradiction that caused it ------------------------
+
+
+def test_pull_up_with_active_high_is_rejected():
+    data = gpio_config_dict()
+    data["gpio"] = {"active_low": False, "pull": "up"}
+    with pytest.raises(ConfigError, match="contradicts active_low"):
+        parse_config(data)
+
+
+def test_pull_down_with_active_low_is_rejected():
+    """The pull would fight the optocoupler and the input would never change."""
+    data = gpio_config_dict()
+    data["gpio"] = {"active_low": True, "pull": "down"}
+    with pytest.raises(ConfigError, match="contradicts active_low"):
+        parse_config(data)

@@ -92,33 +92,32 @@ class GpiozeroPinReader(PinReader):
                 "`python3 -m venv --system-site-packages` so it can see them."
             ) from exc
 
+        # gpiozero's `pull_up` already encodes polarity: with pull_up=True a pin
+        # dragged low reads as active, which is precisely a sinking optocoupler.
+        # Applying our own active_low on top of that would invert it a second time and
+        # report every segment permanently lit -- which is exactly what it did before
+        # this was fixed against real hardware.
         if pull == "none":
-            pull_up: bool | None = None
+            # Nothing holds the pin, so the active level has to be stated outright.
+            kwargs: dict[str, object] = {"pull_up": None, "active_state": not active_low}
         else:
-            pull_up = pull == "up"
+            kwargs = {"pull_up": pull == "up"}
 
         self._devices = {}
         try:
             for pin in pins:
-                # active_state cannot be set while a pull is configured, so the pull
-                # decides the resting level and active_low says which way round the
-                # optocoupler drives it.
-                self._devices[pin] = DigitalInputDevice(
-                    pin, pull_up=pull_up, active_state=None if pull_up is not None else True
-                )
+                self._devices[pin] = DigitalInputDevice(pin, **kwargs)
         except Exception as exc:
             self.close()
             raise SourceError(f"could not claim GPIO pins {list(pins)}: {exc}") from exc
-
-        self._active_low = active_low
         log.info(
             "claimed gpio pins",
             extra={"pins": list(pins), "pull": pull, "active_low": active_low},
         )
 
     def read(self, pin: int) -> bool:
-        value = bool(self._devices[pin].value)
-        return (not value) if self._active_low else value
+        # Already "is this input active" -- see the polarity note in __init__.
+        return bool(self._devices[pin].value)
 
     def close(self) -> None:
         for device in self._devices.values():
