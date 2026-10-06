@@ -43,6 +43,18 @@ the housing), which plugs into a header on the control box.
 | 3 | Red | Red segment, switched leg |
 | 4 | Purple | Buzzer, switched leg |
 
+### Polarity, measured on the bench
+
+Confirmed 2026-10-06 with a spare LTA-502TJ and a 24V supply: **gray is the negative /
+common side, and each colour wire is a switched +24V leg.** Gray to the supply's `-`,
+green to `+`, and the green lamp lights steadily.
+
+So for the optocoupler inputs: the **lamp leg goes to `+`, gray goes to `-`** on each
+channel.
+
+The lamp is also steady when energised, with no self-flashing, which is the final
+confirmation of box diagram 2.
+
 ### This unit has no built-in flasher
 
 Diagrams 3–5 on the box show models with a dedicated `(Gray) Flash` mode wire. Ours is
