@@ -30,6 +30,8 @@ segments:
     pin: 27
   # Tapped and published, but deliberately not named by any state below until the
   # buzzer's meaning is known. An unconstrained segment is inert in state resolution.
+  # The line is held continuously on while sounding -- the beep cadence comes from
+  # inside the buzzer module -- so this reads `steady`, never `flashing`.
   - name: buzzer
     pin: 22
 

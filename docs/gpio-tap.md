@@ -55,6 +55,16 @@ channel.
 The lamp is also steady when energised, with no self-flashing, which is the final
 confirmation of box diagram 2.
 
+### The buzzer line is a steady signal
+
+Measured on the bench: with the purple lead energised, the buzzer beeps on a cadence
+but the optocoupler's input LED stays **solid**. The pulsing is generated inside the
+buzzer module; the wire is held continuously on.
+
+So the buzzer tap reads `steady` when sounding, never `flashing`. The concern that a
+short-duty beep might fall below `flash_duty_range` and classify as `off` does not
+arise. `buzzer: "on"` and `buzzer: steady` would behave identically.
+
 ### This unit has no built-in flasher
 
 Diagrams 3–5 on the box show models with a dedicated `(Gray) Flash` mode wire. Ours is
