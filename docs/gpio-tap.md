@@ -190,37 +190,38 @@ No new machinery, and it adds a third dimension to the state map — which may w
 distinguish some of the three patterns that currently resolve to `unknown`. The only
 cost is calling a buzzer a "segment", which is a naming wart.
 
-### 2. The tap cannot tell "machine off" from "machine idle"
+### 2. Disconnection detection — settled
 
-This is the real gap, and it is the GPIO equivalent of the camera's `dark_reference`.
+**Decision: the connector is the only interface. Nothing is tapped inside the control
+box.** Closed, not revisited.
 
-With only the four conductors in the light connector, every input reads inactive when:
+My earlier framing of this as a critical gap was wrong, and the reason is the harness
+topology. The pass-through harness is *physically* in the light's circuit even though
+the sense electronics are not. So:
 
-* the machine is idle with both lamps off, **and**
-* the machine is powered down, **and**
-* the harness has fallen out.
+| Failure | Visible? |
+| --- | --- |
+| Harness unplugged at the box | **The stack light stops working.** The operator notices, because they rely on it |
+| Harness unplugged at the light | Same — light dead, immediately obvious |
+| Node process or Pi dies | Heartbeat watchdog in the rules engine |
+| Machine unpowered | Looks like `clear`. But the operator knows whether they switched it on |
+| **Sense wire breaks, opto channel dies, wrong pin** | **Silent.** Nothing to see |
 
-All three look identical, and the third is a silent failure — the node would cheerfully
-report `idle` forever while connected to nothing.
+Only the last row is genuinely silent, and it is narrow: the harness is intact and
+passing signals to a working light, but our branch off it has failed. A single channel
+failing is a partial loss (errors stop arriving, completions keep working), which is
+harder to spot than a total one.
 
-The camera does not have this problem: an unplugged camera stops producing frames, and a
-moved one trips the dark reference.
+**Mitigation, in software, no extra wiring:** a staleness rule in the rules engine —
+"no light activity since X" — flagged during working hours. It cannot distinguish "tap
+is dead" from "machine was not used today", but combined with the operator knowing
+whether they ran a batch, it closes the gap in practice.
 
-Options:
+That belongs with the rules engine. Nothing in the node needs to change for it.
 
-* **Tap +24V as a fourth channel.** Needs access to the supply rail inside the control
-  box, which is more invasive than the light connector. Gives a true presence signal,
-  and the spare opto channel is already there for it.
-* **Power the Pi from the machine's 24V** through a buck converter. Machine off → node
-  off → the rules engine's heartbeat watchdog fires. Elegant, but the Pi then reboots on
-  every power cycle, and "machine off" becomes indistinguishable from "monitor died".
-* **Establish that it cannot happen**: if the machine never sits with every channel dark
-  while powered, then "all inputs inactive" unambiguously *means* powered-down or
-  disconnected, and becomes a legitimate alertable state rather than an ambiguity. Costs
-  nothing but observation.
-
-Deferring to a camera node is **not** an option — see the standalone constraint above.
-This has to be solved within the tap.
+Note for later: because the lamp current does *not* flow through our electronics, the
+controller still drives the lamp lead whether or not a lamp is attached. The tap would
+therefore report an error correctly even with the light itself removed.
 
 ## Bench plan
 

@@ -21,17 +21,31 @@ from .types import UNKNOWN_STATE, SegmentMode
 
 
 def _describe(config: NodeConfig) -> str:
-    lens = config.camera.lens_position if config.camera.lens_position is not None else "auto"
     best, worst = detection_latency_bounds(config.detection)
     lines = [
         f"node_id:     {config.node_id}",
         f"config:      {config.path}",
-        f"camera:      {config.camera.source} "
-        f"{config.camera.width}x{config.camera.height} @ {config.camera.fps:g}fps",
-        f"exposure:    {config.camera.exposure_us}us  gain {config.camera.analogue_gain:g}  "
-        f"awb {'on' if config.camera.awb_enable else 'off'}  "
-        f"lens {lens}",
-        f"metric:      {config.detection.metric}",
+        f"sensor:      {config.sensor}",
+    ]
+
+    if config.camera is not None:
+        lens = config.camera.lens_position if config.camera.lens_position is not None else "auto"
+        lines += [
+            f"camera:      {config.camera.source} "
+            f"{config.camera.width}x{config.camera.height} @ {config.camera.fps:g}fps",
+            f"exposure:    {config.camera.exposure_us}us  gain {config.camera.analogue_gain:g}  "
+            f"awb {'on' if config.camera.awb_enable else 'off'}  "
+            f"lens {lens}",
+            f"metric:      {config.detection.metric}",
+        ]
+    else:
+        lines.append(
+            f"gpio:        {config.gpio.sample_hz:g}Hz  "
+            f"active {'low' if config.gpio.active_low else 'high'}  "
+            f"pull {config.gpio.pull}"
+        )
+
+    lines += [
         f"latency:     {best:.1f}-{worst:.1f}s from light change to committed state "
         f"(window {config.detection.flash_window_s:g}s + debounce "
         f"{config.detection.debounce_s:g}s)",
@@ -39,17 +53,23 @@ def _describe(config: NodeConfig) -> str:
         "segments:",
     ]
     for seg in config.segments:
-        lines.append(
-            f"  {seg.name:<10} roi={seg.roi.as_list()} threshold={seg.threshold:g} "
-            f"color={list(seg.render_color)}"
-        )
-    if config.dark_reference is not None:
-        lines.append(
-            f"  {'[dark ref]':<10} roi={config.dark_reference.roi.as_list()} "
-            f"threshold={config.dark_reference.threshold:g}"
-        )
-    else:
-        lines.append("  [dark ref] not configured -- drift and tamper detection is disabled")
+        if seg.roi is not None:
+            lines.append(
+                f"  {seg.name:<10} roi={seg.roi.as_list()} threshold={seg.threshold:g} "
+                f"color={list(seg.render_color)}"
+            )
+        else:
+            lines.append(f"  {seg.name:<10} GPIO {seg.pin}")
+
+    if config.sensor == "camera":
+        if config.dark_reference is not None:
+            lines.append(
+                f"  {'[dark ref]':<10} roi={config.dark_reference.roi.as_list()} "
+                f"threshold={config.dark_reference.threshold:g}"
+            )
+        else:
+            lines.append("  [dark ref] not configured -- drift and tamper detection is disabled")
+
     lines.append("states:")
     for spec in config.states:
         constraints = ", ".join(f"{k}={v}" for k, v in spec.constraints.items())
