@@ -54,7 +54,22 @@ BOARD_GAP = 8.0
 PI_AT = (MARGIN, MARGIN)
 OPTO_AT = (MARGIN, MARGIN + PI_D + BOARD_GAP)
 
-CABLE_D = 14.0  # passes a USB-C plug or a JST-XH housing
+# Every union overlaps and every cut overshoots by this much. Solids that merely touch
+# produce edges shared by four faces, which is exactly what a slicer calls non-manifold.
+EPS = 1.0
+
+# Pi port access. Two generous slots rather than individual cutouts: I do not have
+# verified millimetre positions for the Pi 5's connectors, and a slot that clears
+# everything cannot be wrong. The Pi goes in with USB-C and HDMI toward the front wall
+# (y = 0) and Ethernet and USB toward the left wall (x = 0).
+PCB_TOP = FLOOR + POST_H + 1.6
+SLOT_Z0 = PCB_TOP - 1.5
+SLOT_Z1 = PCB_TOP + 18.0  # Ethernet is the tallest connector
+FRONT_SLOT_X = (12.0, 88.0)   # along the Pi's 85mm edge
+LEFT_SLOT_Y = (12.0, 60.0)    # along the Pi's 56mm edge
+
+# Tap harness entry, in the right-hand wall beside the Wago strip
+CABLE_D = 14.0  # passes a JST-XH housing
 CABLE_Z = FLOOR + 14.0
 CABLE_YS = (30.0, 90.0)
 
@@ -120,7 +135,7 @@ def hole_positions(origin, dx, dy, inset_x, inset_y):
 def board_posts(origin, dx, dy, inset_x, inset_y, pilot):
     solids, cuts = [], []
     for x, y in hole_positions(origin, dx, dy, inset_x, inset_y):
-        solids.append(cyl(POST_OD, POST_H, (x, y, FLOOR)))
+        solids.append(cyl(POST_OD, POST_H + EPS, (x, y, FLOOR - EPS)))
         cuts.append(cyl(pilot, POST_H, (x, y, FLOOR + 1.0)))
     return solids, cuts
 
@@ -136,8 +151,8 @@ def corner_xy():
 def ears():
     out = []
     for y in (WALL + 18, WALL + INNER_Y - 18):
-        plate = box(EAR_LEN + 2, EAR_W, EAR_T, (-EAR_LEN, y - EAR_W / 2, 0))
-        hole = cyl(EAR_HOLE, EAR_T + 2, (-EAR_LEN / 2, y, -1))
+        plate = box(EAR_LEN + WALL + EPS, EAR_W, EAR_T, (-EAR_LEN, y - EAR_W / 2, 0))
+        hole = cyl(EAR_HOLE, EAR_T + 2 * EPS, (-EAR_LEN / 2, y, -EPS))
         out.append(difference([plate, hole]))
     return out
 
@@ -153,56 +168,109 @@ def tie_slots():
 # -- parts -----------------------------------------------------------------------
 
 
-def base() -> trimesh.Trimesh:
-    shell = difference(
-        [
-            box(INNER_X + 2 * WALL, INNER_Y + 2 * WALL, INNER_Z + FLOOR),
-            box(INNER_X, INNER_Y, INNER_Z + 1, (WALL, WALL, FLOOR)),
-        ]
+def clean(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Tidy up after the booleans and refuse to emit anything a slicer will reject."""
+    mesh.merge_vertices()
+    mesh.remove_unreferenced_vertices()
+    mesh.update_faces(mesh.nondegenerate_faces())
+    mesh.update_faces(mesh.unique_faces())
+    trimesh.repair.fix_normals(mesh)
+    return mesh
+
+
+def manifold_report(mesh: trimesh.Trimesh) -> tuple[bool, str]:
+    """What a slicer checks: every edge shared by exactly two faces."""
+    from collections import Counter
+
+    counts = Counter(map(tuple, np.sort(mesh.edges_sorted, axis=1)))
+    bad = sum(1 for c in counts.values() if c != 2)
+    degenerate = int((mesh.area_faces < 1e-9).sum())
+    ok = bad == 0 and degenerate == 0 and mesh.is_winding_consistent
+    return ok, (
+        f"non-manifold edges={bad}  degenerate={degenerate}  "
+        f"winding={'ok' if mesh.is_winding_consistent else 'INCONSISTENT'}"
     )
 
-    solids = [shell, *ears()]
-    cuts = list(tie_slots())
+
+def base() -> trimesh.Trimesh:
+    outer = box(INNER_X + 2 * WALL, INNER_Y + 2 * WALL, INNER_Z + FLOOR)
+    solids = [outer, *ears()]
+
+    for x, y in corner_xy():
+        solids.append(cyl(CORNER_OD, INNER_Z + EPS, (x, y, FLOOR - EPS)))
 
     for args in (
         (PI_AT, PI_HOLE_DX, PI_HOLE_DY, PI_INSET, PI_INSET, PI_PILOT),
         (OPTO_AT, OPTO_HOLE_DX, OPTO_HOLE_DY, OPTO_INSET_X, OPTO_INSET_Y, OPTO_PILOT),
     ):
-        post_solids, post_cuts = board_posts(*args)
+        post_solids, _ = board_posts(*args)
         solids += post_solids
+
+    body = union(solids)
+
+    # The cavity is cut after the posts are merged in, so the posts stand proud of the
+    # floor rather than being swallowed by it.
+    cuts = [box(INNER_X, INNER_Y, INNER_Z + EPS, (WALL, WALL, FLOOR))]
+    cuts += tie_slots()
+
+    for args in (
+        (PI_AT, PI_HOLE_DX, PI_HOLE_DY, PI_INSET, PI_INSET, PI_PILOT),
+        (OPTO_AT, OPTO_HOLE_DX, OPTO_HOLE_DY, OPTO_INSET_X, OPTO_INSET_Y, OPTO_PILOT),
+    ):
+        _, post_cuts = board_posts(*args)
         cuts += post_cuts
 
     for x, y in corner_xy():
-        solids.append(cyl(CORNER_OD, INNER_Z, (x, y, FLOOR)))
         cuts.append(cyl(CORNER_PILOT, INNER_Z, (x, y, FLOOR + 2.0)))
 
-    for y in CABLE_YS:
-        cuts.append(cyl_x(CABLE_D, WALL + 2, (-1, WALL + y, CABLE_Z)))
+    # Pi port access
+    cuts.append(
+        box(
+            FRONT_SLOT_X[1] - FRONT_SLOT_X[0],
+            WALL + 2 * EPS,
+            SLOT_Z1 - SLOT_Z0,
+            (WALL + FRONT_SLOT_X[0], -EPS, SLOT_Z0),
+        )
+    )
+    cuts.append(
+        box(
+            WALL + 2 * EPS,
+            LEFT_SLOT_Y[1] - LEFT_SLOT_Y[0],
+            SLOT_Z1 - SLOT_Z0,
+            (-EPS, WALL + LEFT_SLOT_Y[0], SLOT_Z0),
+        )
+    )
 
-    return difference([union(solids), *cuts])
+    # Tap harness entries, right-hand wall
+    for y in CABLE_YS:
+        cuts.append(
+            cyl_x(CABLE_D, WALL + 2 * EPS, (WALL + INNER_X - EPS, WALL + y, CABLE_Z))
+        )
+
+    return clean(difference([body, *cuts]))
 
 
 def lid() -> trimesh.Trimesh:
     plate = box(INNER_X + 2 * WALL, INNER_Y + 2 * WALL, LID_T)
+    # The lip runs up into the plate rather than stopping flush against it.
     lip = box(
         INNER_X - 2 * LID_CLEAR,
         INNER_Y - 2 * LID_CLEAR,
-        LID_LIP,
+        LID_LIP + EPS,
         (WALL + LID_CLEAR, WALL + LID_CLEAR, -LID_LIP),
     )
     solid = union([plate, lip])
 
     cuts = []
     for x, y in corner_xy():
-        cuts.append(cyl(3.4, LID_T + LID_LIP + 2, (x, y, -LID_LIP - 1)))
-        # countersink so the screw head sits flush with the lid
-        cone = trimesh.creation.cone(radius=3.2, height=3.2, sections=SECTIONS)
-        cone.apply_translation((x, y, LID_T - 3.2 + 1.6))
-        cuts.append(cone)
+        # Counterbore rather than a countersink: a cone primitive has a degenerate
+        # apex, and 250 slivers in the first version is what that cost.
+        cuts.append(cyl(3.4, LID_T + LID_LIP + 2 * EPS, (x, y, -LID_LIP - EPS)))
+        cuts.append(cyl(6.5, 1.6 + EPS, (x, y, LID_T - 1.6)))
         # clearance so the lip does not foul the corner posts
-        cuts.append(cyl(CORNER_OD + 0.6, LID_LIP + 0.1, (x, y, -LID_LIP - 0.05)))
+        cuts.append(cyl(CORNER_OD + 0.6, LID_LIP + EPS, (x, y, -LID_LIP - EPS / 2)))
 
-    return difference([solid, *cuts])
+    return clean(difference([solid, *cuts]))
 
 
 def main() -> None:
@@ -213,14 +281,17 @@ def main() -> None:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
+    failed = False
     for name, part in (("enclosure-base", base()), ("enclosure-lid", lid())):
+        ok, report = manifold_report(part)
+        size = part.extents
         path = out / f"{name}.stl"
         part.export(path)
-        size = part.extents
-        print(
-            f"{path}  {size[0]:.1f} x {size[1]:.1f} x {size[2]:.1f} mm  "
-            f"watertight={part.is_watertight}  {path.stat().st_size // 1024} KB"
-        )
+        print(f"{path}  {size[0]:.1f} x {size[1]:.1f} x {size[2]:.1f} mm")
+        print(f"    {report}  -> {'OK' if ok else 'WILL NOT SLICE'}")
+        failed |= not ok
+    if failed:
+        raise SystemExit("refusing to ship a mesh a slicer will reject")
 
 
 if __name__ == "__main__":
