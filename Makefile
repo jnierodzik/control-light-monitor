@@ -73,7 +73,7 @@ bootstrap:
 	@echo "Now: make deploy PI=$(PI) PI_USER=$(PI_USER) NODE=$(NODE)"
 
 deploy:
-	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' --exclude '__pycache__' 		--exclude 'samples' --exclude '.pytest_cache' --exclude '.ruff_cache' 		./ $(REMOTE):/opt/stacklight/
+	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' --exclude '__pycache__' 		--exclude 'samples' --exclude '.pytest_cache' --exclude '.ruff_cache' --exclude 'hardware' 		./ $(REMOTE):/opt/stacklight/
 	$(SSH) $(REMOTE) '/opt/stacklight/.venv/bin/pip install -q -e /opt/stacklight'
 	$(SCP) config/$(NODE).yaml $(REMOTE):/etc/stacklight/$(NODE).yaml
 	$(SSH) $(REMOTE) 'sudo cp /opt/stacklight/systemd/stacklight-node@.service /etc/systemd/system/ && sudo systemctl daemon-reload'

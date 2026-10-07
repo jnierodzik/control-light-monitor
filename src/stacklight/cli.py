@@ -159,17 +159,72 @@ def _reading_row(reading: Reading, names: tuple[str, ...], t0: float) -> str:
     )
 
 
+def _detect_header(config: NodeConfig) -> tuple[str, tuple[str, ...]]:
+    names = config.segment_names
+    best, worst = detection_latency_bounds(config.detection)
+    print(f"expected latency {best:.1f}-{worst:.1f}s after each light change\n")
+    header_values = "  ".join(f"{n:>6}" for n in names)
+    header_modes = " ".join(f"{n:<8}" for n in names)
+    header = (
+        f"{'t':>7}  {header_values}   dark  | {header_modes} | "
+        f"{'candidate':<9} {'state':<9} confidence"
+    )
+    print(header)
+    print("-" * len(header))
+    return header, names
+
+
+def _cmd_detect_gpio(config: NodeConfig, args: argparse.Namespace) -> int:
+    """Watch the electrical tap: pin states, resolved modes, committed state."""
+    from .sources.gpio import GpioSampler
+
+    for flag in ("demo", "fast", "mode", "source"):
+        if getattr(args, flag, None):
+            print(
+                f"error: --{flag.replace('_', '-')} applies to camera nodes only", file=sys.stderr
+            )
+            return 2
+
+    hz = config.gpio.sample_hz
+    print(
+        f"tapping {', '.join(f'{s.name}=GPIO{s.pin}' for s in config.segments)} "
+        f"at {hz:g}Hz, active {'low' if config.gpio.active_low else 'high'}\n"
+    )
+    _, names = _detect_header(config)
+
+    detector = Detector(config)
+    every = max(1, round(hz * args.interval))
+    limit = args.frames if args.frames else round(args.seconds * hz)
+
+    t0: float | None = None
+    with GpioSampler.from_config(config) as sampler:
+        for sample in sampler.samples(limit=limit):
+            reading = detector.update_values(
+                t=sample.t, wall=sample.wall, seq=sample.seq, values=sample.values
+            )
+            if t0 is None:
+                t0 = reading.t
+            if reading.changed:
+                print(f"{_reading_row(reading, names, t0)}   <-- COMMITTED {reading.state}")
+            elif sample.seq % every == 0:
+                print(_reading_row(reading, names, t0))
+    return 0
+
+
 def _cmd_detect(args: argparse.Namespace) -> int:
     """Run the detection engine and print what it sees.
 
-    This is the tuning tool: watch the raw brightness numbers next to the mode each
-    segment resolves to, and see exactly when a state commits.
+    The tuning tool for whichever sensor the config names: raw values beside the mode
+    each segment resolves to, and exactly when a state commits.
     """
     from .clock import VirtualClock
     from .sources import create_source
     from .sources.synthetic import ScriptStep, SyntheticSource
 
     config = load_config(args.config)
+    if config.sensor == "gpio":
+        return _cmd_detect_gpio(config, args)
+
     # --fast drives the source from a virtual clock, so a 25-second sequence finishes
     # immediately instead of taking 25 seconds.
     clock = VirtualClock() if args.fast else None
@@ -194,17 +249,7 @@ def _cmd_detect(args: argparse.Namespace) -> int:
             offset += seconds
         print()
 
-    names = config.segment_names
-    best, worst = detection_latency_bounds(config.detection)
-    print(f"expected latency {best:.1f}-{worst:.1f}s after each light change\n")
-    header_values = "  ".join(f"{n:>6}" for n in names)
-    header_modes = " ".join(f"{n:<8}" for n in names)
-    header = (
-        f"{'t':>7}  {header_values}   dark  | {header_modes} | "
-        f"{'candidate':<9} {'state':<9} confidence"
-    )
-    print(header)
-    print("-" * len(header))
+    _, names = _detect_header(config)
 
     detector = Detector(config)
     every = max(1, round(config.camera.fps * args.interval))
