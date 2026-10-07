@@ -44,8 +44,8 @@ PI_PILOT = 2.1  # M2.5 self-tapping into plastic
 OPTO_W, OPTO_D = 72.15, 45.45
 OPTO_HOLE_DX, OPTO_HOLE_DY = 40.0, 37.5
 OPTO_PILOT = 2.5  # M3
-# Assumes the hole pattern is centred on the outline. If the posts do not line up on a
-# test fit, measure one hole from a board corner and set these two directly.
+# Verified against the real board with the fit-test coupon on 2026-10-06: the pattern
+# is centred on the outline and the posts line up.
 OPTO_INSET_X = (OPTO_W - OPTO_HOLE_DX) / 2
 OPTO_INSET_Y = (OPTO_D - OPTO_HOLE_DY) / 2
 
