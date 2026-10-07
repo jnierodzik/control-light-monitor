@@ -78,6 +78,7 @@ CABLE_Z = FLOOR + 14.0
 CABLE_YS = (30.0, 90.0)
 
 CORNER_OD = 9.0
+CORNER_OVERLAP = 1.0  # how far each lid boss bites into the walls
 CORNER_PILOT = 2.5
 LID_T = 2.5
 LID_LIP = 3.0
@@ -145,10 +146,18 @@ def board_posts(origin, dx, dy, inset_x, inset_y, pilot):
 
 
 def corner_xy():
+    """Lid-screw boss centres.
+
+    Nudged outward so each boss overlaps the walls rather than sitting tangent to
+    them. A cylinder exactly touching a plane shares a single line with it, which is
+    every bit as non-manifold as two coincident faces -- it is where the last eight
+    bad edges came from.
+    """
+    inset = CORNER_OD / 2 - CORNER_OVERLAP
     return [
         (x, y)
-        for x in (WALL + CORNER_OD / 2, WALL + INNER_X - CORNER_OD / 2)
-        for y in (WALL + CORNER_OD / 2, WALL + INNER_Y - CORNER_OD / 2)
+        for x in (WALL + inset, WALL + INNER_X - inset)
+        for y in (WALL + inset, WALL + INNER_Y - inset)
     ]
 
 
@@ -197,35 +206,30 @@ def manifold_report(mesh: trimesh.Trimesh) -> tuple[bool, str]:
 
 
 def base() -> trimesh.Trimesh:
-    outer = box(INNER_X + 2 * WALL, INNER_Y + 2 * WALL, INNER_Z + FLOOR)
-    solids = [outer, *ears()]
+    # Order matters, and getting it wrong is silent. The cavity has to be cut out of the
+    # shell BEFORE the posts are unioned in -- cutting it afterwards removes every post
+    # standing inside it, leaving a bare floor that still passes every manifold check.
+    shell = difference(
+        [
+            box(INNER_X + 2 * WALL, INNER_Y + 2 * WALL, INNER_Z + FLOOR),
+            box(INNER_X, INNER_Y, INNER_Z + EPS, (WALL, WALL, FLOOR)),
+        ]
+    )
+
+    solids = [shell, *ears()]
+    cuts = list(tie_slots())
 
     for x, y in corner_xy():
         solids.append(cyl(CORNER_OD, INNER_Z + EPS, (x, y, FLOOR - EPS)))
-
-    for args in (
-        (PI_AT, PI_HOLE_DX, PI_HOLE_DY, PI_INSET, PI_INSET, PI_PILOT),
-        (OPTO_AT, OPTO_HOLE_DX, OPTO_HOLE_DY, OPTO_INSET_X, OPTO_INSET_Y, OPTO_PILOT),
-    ):
-        post_solids, _ = board_posts(*args)
-        solids += post_solids
-
-    body = union(solids)
-
-    # The cavity is cut after the posts are merged in, so the posts stand proud of the
-    # floor rather than being swallowed by it.
-    cuts = [box(INNER_X, INNER_Y, INNER_Z + EPS, (WALL, WALL, FLOOR))]
-    cuts += tie_slots()
-
-    for args in (
-        (PI_AT, PI_HOLE_DX, PI_HOLE_DY, PI_INSET, PI_INSET, PI_PILOT),
-        (OPTO_AT, OPTO_HOLE_DX, OPTO_HOLE_DY, OPTO_INSET_X, OPTO_INSET_Y, OPTO_PILOT),
-    ):
-        _, post_cuts = board_posts(*args)
-        cuts += post_cuts
-
-    for x, y in corner_xy():
         cuts.append(cyl(CORNER_PILOT, INNER_Z, (x, y, FLOOR + 2.0)))
+
+    for args in (
+        (PI_AT, PI_HOLE_DX, PI_HOLE_DY, PI_INSET, PI_INSET, PI_PILOT),
+        (OPTO_AT, OPTO_HOLE_DX, OPTO_HOLE_DY, OPTO_INSET_X, OPTO_INSET_Y, OPTO_PILOT),
+    ):
+        post_solids, post_cuts = board_posts(*args)
+        solids += post_solids
+        cuts += post_cuts
 
     # Pi port access
     cuts.append(
@@ -251,7 +255,29 @@ def base() -> trimesh.Trimesh:
             cyl_x(CABLE_D, WALL + 2 * EPS, (WALL + INNER_X - EPS, WALL + y, CABLE_Z))
         )
 
-    return clean(difference([body, *cuts]))
+    return clean(difference([union(solids), *cuts]))
+
+
+def all_post_centres() -> list[tuple[float, float]]:
+    """Every board post, for the geometry check in main()."""
+    return hole_positions(PI_AT, PI_HOLE_DX, PI_HOLE_DY, PI_INSET, PI_INSET) + hole_positions(
+        OPTO_AT, OPTO_HOLE_DX, OPTO_HOLE_DY, OPTO_INSET_X, OPTO_INSET_Y
+    )
+
+
+def posts_present(mesh: trimesh.Trimesh, centres) -> tuple[int, int]:
+    """Count how many posts actually have material in them.
+
+    A manifold check says nothing about whether the part has the features it is
+    supposed to have. A box whose posts were accidentally cut away is perfectly
+    watertight and completely useless, which is exactly what shipped once.
+
+    Samples just off-centre: the post centre is hollow for most of its height because
+    of the pilot hole.
+    """
+    probes = [[x + POST_OD / 2 - 1.2, y, FLOOR + POST_H / 2] for x, y in centres]
+    inside = mesh.contains(np.array(probes))
+    return int(inside.sum()), len(probes)
 
 
 def lid() -> trimesh.Trimesh:
@@ -335,6 +361,15 @@ def main() -> None:
         print(f"{path}  {size[0]:.1f} x {size[1]:.1f} x {size[2]:.1f} mm")
         print(f"    {report}  -> {'OK' if ok else 'WILL NOT SLICE'}")
         failed |= not ok
+
+        if name in ("enclosure-base", "port-test-corner"):
+            centres = all_post_centres()
+            if name == "port-test-corner":  # only the Pi's four are in the section
+                centres = hole_positions(PI_AT, PI_HOLE_DX, PI_HOLE_DY, PI_INSET, PI_INSET)
+            found, total = posts_present(part, centres)
+            print(f"    board posts present {found}/{total}"
+                  f"  -> {'OK' if found == total else 'MISSING POSTS'}")
+            failed |= found != total
     if failed:
         raise SystemExit("refusing to ship a mesh a slicer will reject")
 
