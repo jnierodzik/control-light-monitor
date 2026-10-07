@@ -273,6 +273,30 @@ def lid() -> trimesh.Trimesh:
     return clean(difference([solid, *cuts]))
 
 
+def coupon() -> trimesh.Trimesh:
+    """A throwaway test plate carrying just the optocoupler board's post pattern.
+
+    Fifteen minutes of printing to check the one dimension I am not certain of --
+    whether the 40 x 37.5 hole pattern really is centred on the 72.15 x 45.45 outline.
+    Far cheaper than discovering it after a ten-hour box print.
+    """
+    pad = 8.0
+    plate_x = OPTO_W + 2 * pad
+    plate_y = OPTO_D + 2 * pad
+    solids = [box(plate_x, plate_y, 3.0)]
+    cuts = []
+    for i in (0, 1):
+        for j in (0, 1):
+            x = pad + OPTO_INSET_X + i * OPTO_HOLE_DX
+            y = pad + OPTO_INSET_Y + j * OPTO_HOLE_DY
+            solids.append(cyl(POST_OD, POST_H + EPS, (x, y, 3.0 - EPS)))
+            cuts.append(cyl(OPTO_PILOT, POST_H, (x, y, 3.0 + 1.0)))
+    # scratch outline so you can see whether the board overhangs
+    for edge in ((pad, pad, plate_x - 2 * pad, 0.6), (pad, plate_y - pad, plate_x - 2 * pad, 0.6)):
+        cuts.append(box(edge[2], edge[3], 0.6, (edge[0], edge[1], 3.0 - 0.6)))
+    return clean(difference([union(solids), *cuts]))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="hardware/stl")
@@ -282,7 +306,9 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     failed = False
-    for name, part in (("enclosure-base", base()), ("enclosure-lid", lid())):
+    parts = (("enclosure-base", base), ("enclosure-lid", lid), ("fit-test-coupon", coupon))
+    for name, builder in parts:
+        part = builder()
         ok, report = manifold_report(part)
         size = part.extents
         path = out / f"{name}.stl"
