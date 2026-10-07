@@ -4,7 +4,7 @@
 CONFIG ?= config/dev-synthetic.yaml
 UV     ?= uv
 
-.PHONY: help setup dev dry-run node test lint fmt calibrate bootstrap deploy logs restart probe clean
+.PHONY: help setup dev dry-run node test lint fmt calibrate stage bootstrap deploy logs restart probe clean
 
 help:
 	@echo "setup      install the dev environment (uv, Python 3.11)"
@@ -17,6 +17,7 @@ help:
 	@echo "calibrate  serve the calibration web UI"
 	@echo ""
 	@echo "On the Pi (override PI, PI_USER, NODE):"
+	@echo "stage      copy code + build the venv in ~/stacklight (no sudo, no systemd)"
 	@echo "bootstrap  one-time: apt packages, dirs, and a --system-site-packages venv"
 	@echo "deploy     rsync the code, install the config and the systemd unit"
 	@echo "logs       follow journalctl for the node"
@@ -62,6 +63,23 @@ REMOTE  ?= $(PI_USER)@$(PI)
 # carries no scope id and so fails with "No route to host".
 SSH     ?= ssh -4
 SCP     ?= scp -4
+
+# Everything needed to run the tap by hand on a freshly flashed Pi, with no sudo and no
+# systemd. This is what gets re-run after a reflash; it takes about a minute.
+#
+#   make stage PI=stacklight.local PI_USER=jnierodzik
+STAGE_DIR ?= stacklight
+stage:
+	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' \
+		--exclude '__pycache__' --exclude 'samples' --exclude '.pytest_cache' \
+		--exclude '.ruff_cache' --exclude 'hardware' ./ $(REMOTE):$(STAGE_DIR)/
+	$(SSH) $(REMOTE) 'cd $(STAGE_DIR) && python3 -m venv --system-site-packages .venv \
+		&& .venv/bin/pip install -q -e . \
+		&& .venv/bin/python -c "import gpiozero, lgpio; print(\"gpio stack OK\")"'
+	$(SSH) $(REMOTE) '$(STAGE_DIR)/.venv/bin/stacklight validate $(STAGE_DIR)/config/machine1.yaml'
+	@echo
+	@echo "Staged. Watch the tap with:"
+	@echo "  $(SSH) $(REMOTE) '$(STAGE_DIR)/.venv/bin/stacklight detect $(STAGE_DIR)/config/machine1.yaml'"
 
 # One-time setup on a fresh Pi: system packages, directories, and the venv that can see
 # apt's picamera2.
