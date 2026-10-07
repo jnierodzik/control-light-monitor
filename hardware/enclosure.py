@@ -49,10 +49,14 @@ OPTO_PILOT = 2.5  # M3
 OPTO_INSET_X = (OPTO_W - OPTO_HOLE_DX) / 2
 OPTO_INSET_Y = (OPTO_D - OPTO_HOLE_DY) / 2
 
+# The Pi sits close to the two walls its connectors face, so a plug reaches the socket
+# instead of being fished 10mm down a slot. Its corner posts merge into the walls, which
+# is fine -- they are stronger for it.
+PORT_MARGIN = 4.0
 MARGIN = 8.0
 BOARD_GAP = 8.0
-PI_AT = (MARGIN, MARGIN)
-OPTO_AT = (MARGIN, MARGIN + PI_D + BOARD_GAP)
+PI_AT = (PORT_MARGIN, PORT_MARGIN)
+OPTO_AT = (PORT_MARGIN, PORT_MARGIN + PI_D + BOARD_GAP)
 
 # Every union overlaps and every cut overshoots by this much. Solids that merely touch
 # produce edges shared by four faces, which is exactly what a slicer calls non-manifold.
@@ -65,8 +69,8 @@ EPS = 1.0
 PCB_TOP = FLOOR + POST_H + 1.6
 SLOT_Z0 = PCB_TOP - 1.5
 SLOT_Z1 = PCB_TOP + 18.0  # Ethernet is the tallest connector
-FRONT_SLOT_X = (12.0, 88.0)   # along the Pi's 85mm edge
-LEFT_SLOT_Y = (12.0, 60.0)    # along the Pi's 56mm edge
+FRONT_SLOT_X = (8.0, 85.0)   # along the Pi's 85mm edge
+LEFT_SLOT_Y = (8.0, 56.0)    # along the Pi's 56mm edge
 
 # Tap harness entry, in the right-hand wall beside the Wago strip
 CABLE_D = 14.0  # passes a JST-XH housing
@@ -297,6 +301,17 @@ def coupon() -> trimesh.Trimesh:
     return clean(difference([union(solids), *cuts]))
 
 
+def corner_test() -> trimesh.Trimesh:
+    """The box corner that holds the Pi, cut straight out of the real base.
+
+    An intersection rather than a reimplementation, so what you test-fit is exactly the
+    geometry the full base has. Prints in a couple of hours instead of ten, and tells
+    you whether the port slots actually line up with a real Pi 5 before you commit.
+    """
+    section = box(WALL + 100, WALL + 72, FLOOR + 30, (-1, -1, -1))
+    return clean(trimesh.boolean.intersection([base(), section], engine="manifold"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="hardware/stl")
@@ -306,7 +321,11 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     failed = False
-    parts = (("enclosure-base", base), ("enclosure-lid", lid), ("fit-test-coupon", coupon))
+    parts = (
+        ("enclosure-base", base),
+        ("enclosure-lid", lid),
+        ("port-test-corner", corner_test),
+    )
     for name, builder in parts:
         part = builder()
         ok, report = manifold_report(part)
