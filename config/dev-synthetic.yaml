@@ -42,11 +42,25 @@ detection:
   flash_duty_range: [0.2, 0.8]
   flash_min_transitions: 2
 
+# The machine's stack light is an ANNUNCIATOR, not a state indicator.
+#
+# It is dark when the machine is powered off, when it is idle, AND while it is running.
+# Those three are indistinguishable -- "running" is simply not observable from this
+# light. It lights only to ask for attention, and latches until the operator acts:
+#
+#   red lit   -> an error occurred
+#   green lit -> a run completed successfully
+#
+# "on" matches steady OR flashing, because red means error whether or not it blinks.
+# The flash mode is still measured and published on every payload, so if blinking turns
+# out to mean something distinct from solid, splitting these is a one-line change.
+#
+# Note that "on" and "off" must be quoted: YAML 1.1 reads them bare as booleans.
+# Run `stacklight states config/dev-synthetic.yaml` for the full resolution table.
 states:
-  fault:     {red: steady,   green: "off"}
-  running:   {red: "off",    green: steady}
-  attention: {red: flashing}
-  idle:      {red: "off",    green: "off"}
+  error: {red: "on"}                    # error wins if both were ever lit at once
+  done:  {red: "off", green: "on"}
+  clear: {red: "off", green: "off"}     # nothing pending: off, idle, or mid-run
 
 publish:
   heartbeat_s: 15              # health topic cadence; the rules watchdog keys off this

@@ -85,7 +85,7 @@ def health_payload(
         # None rather than 0.0 on the very first frame: "not measurable yet" is a
         # different thing from "stalled", and the watchdog should not confuse them.
         "fps": round(reading.fps, 2) if reading.fps > 0 else None,
-        "fps_configured": config.camera.fps,
+        "fps_configured": config.sample_rate_hz,
         "frames": reading.seq,
         "state": reading.state,
         "candidate_state": reading.candidate_state,

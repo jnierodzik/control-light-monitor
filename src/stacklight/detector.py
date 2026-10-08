@@ -230,18 +230,52 @@ class Detector:
     # -- the pipeline --------------------------------------------------------------
 
     def update(self, frame: Frame) -> Reading:
-        """Feed one frame through the engine and return the resulting reading."""
-        t = frame.t
+        """Camera path: sample the configured ROIs, then run the shared pipeline."""
+        values = {
+            seg.name: measure(frame.data, seg.roi, self._metric) for seg in self._config.segments
+        }
+        dark_value = (
+            None
+            if self._config.dark_reference is None
+            else measure(frame.data, self._config.dark_reference.roi, self._metric)
+        )
+        return self.update_values(
+            t=frame.t,
+            wall=frame.wall,
+            seq=frame.seq,
+            values=values,
+            dark_value=dark_value,
+        )
+
+    def update_values(
+        self,
+        *,
+        t: float,
+        wall: datetime,
+        seq: int,
+        values: Mapping[str, float],
+        dark_value: float | None = None,
+    ) -> Reading:
+        """Run the pipeline over already-sampled per-segment values.
+
+        Sensor-agnostic on purpose. Everything from here on -- flash classification,
+        debounce, state resolution -- cares only that each segment has a number that is
+        above or below its threshold. A camera gets that number by averaging pixels in
+        an ROI; an electrical tap on the lamp wiring gets it from a GPIO pin reading
+        0 or 255. Neither is visible from this point in the pipeline.
+        """
+        missing = [seg.name for seg in self._config.segments if seg.name not in values]
+        if missing:
+            raise KeyError(f"no sampled value for segment(s) {missing}")
+
         segments = {
-            seg.name: self._trackers[seg.name].update(t, measure(frame.data, seg.roi, self._metric))
+            seg.name: self._trackers[seg.name].update(t, float(values[seg.name]))
             for seg in self._config.segments
         }
 
         dark: SegmentReading | None = None
-        if self._dark_tracker is not None and self._config.dark_reference is not None:
-            dark = self._dark_tracker.update(
-                t, measure(frame.data, self._config.dark_reference.roi, self._metric)
-            )
+        if self._dark_tracker is not None and dark_value is not None:
+            dark = self._dark_tracker.update(t, float(dark_value))
 
         warming_up = not all(reading.settled for reading in segments.values())
         if dark is not None and not dark.settled:
@@ -268,14 +302,14 @@ class Detector:
         if candidate != self._candidate:
             self._candidate = candidate
             self._candidate_since_t = t
-            self._candidate_since_wall = frame.wall
+            self._candidate_since_wall = wall
 
         changed = self._maybe_commit(candidate, t, warming_up, segments, dark)
 
         return Reading(
-            seq=frame.seq,
+            seq=seq,
             t=t,
-            wall=frame.wall,
+            wall=wall,
             fps=self._estimate_fps(t),
             segments=segments,
             dark_reference=dark,

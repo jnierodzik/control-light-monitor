@@ -1,0 +1,62 @@
+# machine electrical tap: reads the lamp wiring through optocouplers instead of watching
+# the light with a camera. Standalone -- there is no camera section because a GPIO node
+# needs no camera hardware, no picamera2 and no calibration.
+#
+# Wiring, via a JST-XH 4-pin pass-through harness at the control box connector:
+#
+#   Gray   common return  -> opto input ground (NOT the Pi's ground: that would undo
+#                            the isolation the optocouplers exist to provide)
+#   Green  -> opto ch1 -> GPIO 27
+#   Red    -> opto ch2 -> GPIO 17
+#   Purple -> opto ch3 -> GPIO 22   (buzzer)
+
+node_id: machine1
+sensor: gpio
+
+mqtt:
+  host: localhost
+  port: 1883
+  base_topic: shop/lights
+
+gpio:
+  sample_hz: 100        # ~67 samples per cycle of a 1.5Hz blink, against 15fps of video
+  # The MT-301R4P-P sources rather than sinks -- the -P is PNP output. It drives the pin
+  # HIGH when the lamp lead is energised and holds it low through an on-board pull-down
+  # when idle. Measured 2026-10-08: with the Pi pulling up and the board pulling down,
+  # every output sat at 1.158V, right on the input threshold, which is why readings
+  # flipped at random. Pulling down instead puts idle at a solid 0V.
+  active_low: false
+  pull: down
+
+segments:
+  - name: red
+    pin: 17
+  - name: green
+    pin: 27
+  # Tapped and published, but deliberately not named by any state below until the
+  # buzzer's meaning is known. An unconstrained segment is inert in state resolution.
+  # The line is held continuously on while sounding -- the beep cadence comes from
+  # inside the buzzer module -- so this reads `steady`, never `flashing`.
+  - name: buzzer
+    pin: 22
+
+detection:
+  debounce_s: 1.5
+  flash_window_s: 2.0
+  flash_duty_range: [0.2, 0.8]
+  flash_min_transitions: 2
+
+# The machine's stack light is an ANNUNCIATOR, not a state indicator. Dark covers powered
+# off, idle AND running alike. It lights only to ask for attention, and latches until
+# the operator acts. See docs/gpio-tap.md.
+#
+# "on" matches steady or flashing: red means error whether or not the lamp blinks.
+# Both "on" and "off" must be quoted -- YAML 1.1 reads them bare as booleans.
+states:
+  error: {red: "on"}                    # error wins if both were ever lit at once
+  done:  {red: "off", green: "on"}
+  clear: {red: "off", green: "off"}     # nothing pending: off, idle, or mid-run
+
+logging:
+  level: INFO
+  format: text

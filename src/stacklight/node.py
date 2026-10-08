@@ -26,6 +26,7 @@ from .payloads import (
 from .publisher import QOS_STATE, QOS_TELEMETRY, Message, Publisher, PublishError
 from .snapshot import encode_snapshot
 from .sources.base import Frame, FrameSource
+from .sources.gpio import GpioSampler
 
 log = logging.getLogger(__name__)
 
@@ -50,13 +51,16 @@ class Node:
     def __init__(
         self,
         config: NodeConfig,
-        source: FrameSource,
+        source: FrameSource | GpioSampler,
         publisher: Publisher,
         *,
         detector: Detector | None = None,
     ) -> None:
         self._config = config
         self._source = source
+        # A camera yields frames to measure; a tap yields values already sampled. The
+        # only thing downstream that notices is snapshot publishing, which needs pixels.
+        self._is_camera = isinstance(source, FrameSource)
         self._publisher = publisher
         self._detector = detector or Detector(config)
 
@@ -153,9 +157,16 @@ class Node:
                 break
 
     def step(self) -> Reading:
-        """Capture one frame, run detection, and publish whatever is due."""
-        frame = self._source.read()
-        reading = self._detector.update(frame)
+        """Take one sample, run detection, and publish whatever is due."""
+        frame: Frame | None = None
+        if self._is_camera:
+            frame = self._source.read()
+            reading = self._detector.update(frame)
+        else:
+            sample = self._source.read()
+            reading = self._detector.update_values(
+                t=sample.t, wall=sample.wall, seq=sample.seq, values=sample.values
+            )
         self._last_reading = reading
         if self._started_t is None:
             self._started_t = reading.t
@@ -229,7 +240,11 @@ class Node:
         )
         self._publish(self._config.health_topic, payload, retain=False, qos=QOS_TELEMETRY)
 
-    def _maybe_publish_snapshot(self, reading: Reading, frame: Frame) -> None:
+    def _maybe_publish_snapshot(self, reading: Reading, frame: Frame | None) -> None:
+        # Nothing to encode on a tap node -- there are no pixels. Skipped silently
+        # rather than configured away, so one publish schedule covers both sensors.
+        if frame is None:
+            return
         if reading.changed and self._config.publish.snapshot_on_transition:
             # Bypasses the rate limit on purpose: a notification should carry an image
             # of the state that triggered it, not one from minutes earlier. Debounce

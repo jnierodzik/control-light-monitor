@@ -13,3 +13,6 @@ data/
 *.sqlite
 *.sqlite3
 .DS_Store
+
+# rendered from hardware/*.scad
+*.stl

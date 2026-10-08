@@ -1,0 +1,49 @@
+# The rules engine: subscribes to node state, notifies, logs history.
+#
+#   sudo systemctl enable --now stacklight-rules
+#
+# reads /etc/stacklight/rules.yaml.
+#
+# Install to /etc/systemd/system/stacklight-rules.service
+
+[Unit]
+Description=Stack light rules engine
+Documentation=https://github.com/jnierodzik/control-light-monitor
+# Wants rather than Requires: the rules process tolerates a broker that is not up yet
+# and keeps retrying, which is more useful than refusing to start.
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
+# Never give up restarting: this is the process that tells you the machine needs you.
+# systemd only reads this in [Unit] -- in [Service] it is silently ignored.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=jnierodzik
+WorkingDirectory=/opt/stacklight
+ExecStart=/opt/stacklight/.venv/bin/stacklight-rules /etc/stacklight/rules.yaml
+Environment=PYTHONUNBUFFERED=1
+
+# The thing that tells you the machine needs you must come back on its own.
+Restart=always
+RestartSec=5
+
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stacklight-rules
+
+# The history database lives here and must survive a restart.
+StateDirectory=stacklight
+ReadWritePaths=/var/lib/stacklight
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

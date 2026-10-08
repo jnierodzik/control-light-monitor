@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import itertools
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,9 +22,22 @@ import yaml
 
 from .errors import ConfigError
 from .types import BRIGHTNESS_METRICS, UNKNOWN_STATE, SegmentMode
+from .validation import (
+    _as_mapping,
+    _boolean,
+    _fail,
+    _number,
+    _pair,
+    _reject_unknown,
+    _require,
+    _string,
+)
 
 NODE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 CAMERA_SOURCES = ("picamera", "file", "synthetic")
+
+#: How a node senses the light. "gpio" needs no camera hardware or config at all.
+SENSORS = ("camera", "gpio")
 
 #: Fallback render colours for SyntheticSource when a segment declares none.
 _NAMED_COLORS: dict[str, tuple[int, int, int]] = {
@@ -42,75 +55,6 @@ _NAMED_COLORS: dict[str, tuple[int, int, int]] = {
 # --------------------------------------------------------------------------------------
 # Small validation helpers. Each carries a dotted path so errors point at the exact key.
 # --------------------------------------------------------------------------------------
-
-
-def _fail(path: str, message: str) -> None:
-    raise ConfigError(f"{path or '<root>'}: {message}")
-
-
-def _as_mapping(value: Any, path: str) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if not isinstance(value, Mapping):
-        _fail(path, f"expected a mapping, got {type(value).__name__}")
-    keys = [k for k in value if not isinstance(k, str)]
-    if keys:
-        _fail(path, f"keys must be strings, got {keys!r}")
-    return dict(value)
-
-
-def _reject_unknown(data: Mapping[str, Any], allowed: Iterable[str], path: str) -> None:
-    unknown = sorted(set(data) - set(allowed))
-    if unknown:
-        _fail(path, f"unknown key(s) {unknown}; allowed keys are {sorted(allowed)}")
-
-
-def _require(data: Mapping[str, Any], key: str, path: str) -> Any:
-    if key not in data or data[key] is None:
-        _fail(path, f"missing required key {key!r}")
-    return data[key]
-
-
-def _number(
-    value: Any,
-    path: str,
-    *,
-    minimum: float | None = None,
-    maximum: float | None = None,
-    integer: bool = False,
-) -> Any:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        _fail(path, f"expected a number, got {value!r}")
-    if integer and not float(value).is_integer():
-        _fail(path, f"expected an integer, got {value!r}")
-    if minimum is not None and value < minimum:
-        _fail(path, f"must be >= {minimum}, got {value!r}")
-    if maximum is not None and value > maximum:
-        _fail(path, f"must be <= {maximum}, got {value!r}")
-    return int(value) if integer else float(value)
-
-
-def _string(value: Any, path: str, *, choices: Sequence[str] | None = None) -> str:
-    if not isinstance(value, str):
-        _fail(path, f"expected a string, got {value!r}")
-    if choices is not None and value not in choices:
-        _fail(path, f"expected one of {list(choices)}, got {value!r}")
-    return value
-
-
-def _boolean(value: Any, path: str) -> bool:
-    if not isinstance(value, bool):
-        _fail(path, f"expected true or false, got {value!r}")
-    return value
-
-
-def _pair(value: Any, path: str, *, integer: bool = False, minimum: float | None = None) -> tuple:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or len(value) != 2:
-        _fail(path, f"expected a 2-element list, got {value!r}")
-    return tuple(
-        _number(item, f"{path}[{i}]", integer=integer, minimum=minimum)
-        for i, item in enumerate(value)
-    )
 
 
 # --------------------------------------------------------------------------------------
@@ -164,8 +108,11 @@ class SegmentConfig:
     """One light segment on the pole."""
 
     name: str
-    roi: Roi
+    #: Where the segment is in frame. Camera nodes only.
+    roi: Roi | None
     threshold: float
+    #: BCM pin the segment's optocoupler output lands on. GPIO nodes only.
+    pin: int | None = None
     #: Nominal lit colour. Used for the optional colour sanity check and by
     #: SyntheticSource when rendering this segment. Inferred from the name when omitted.
     color: tuple[int, int, int] | None = None
@@ -251,6 +198,21 @@ class CameraConfig:
 
 
 @dataclass(frozen=True)
+class GpioConfig:
+    """Settings for a node that reads the lamp wiring rather than watching it."""
+
+    #: Poll rate. Far above the camera's 15fps, which is the point: a blink is resolved
+    #: by tens of samples per cycle rather than one or two frames.
+    sample_hz: float = 100.0
+    #: Optocoupler outputs usually pull the pin DOWN when the field input is energised,
+    #: so a low pin means a lit lamp. Flip if your board sources instead of sinks.
+    active_low: bool = True
+    #: Internal pull on the Pi's input. Must oppose the opto's active level, or a
+    #: floating pin reads as whatever it last saw.
+    pull: str = "up"
+
+
+@dataclass(frozen=True)
 class DetectionConfig:
     debounce_s: float
     flash_window_s: float
@@ -306,6 +268,37 @@ class CalibrationConfig:
 
 
 @dataclass(frozen=True)
+class ModeSet:
+    """The set of segment modes that satisfy one state constraint.
+
+    Usually a single mode. The exception is ``on``, which matches ``steady`` or
+    ``flashing`` -- for an annunciator where red means "error" whether it is solid or
+    blinking, depending on which would be depending on a distinction that may not exist.
+    """
+
+    modes: frozenset[SegmentMode]
+    #: The token written in the config, kept for error messages and display.
+    label: str
+
+    def matches(self, mode: SegmentMode | None) -> bool:
+        return mode in self.modes
+
+    def __str__(self) -> str:
+        return self.label
+
+
+#: Tokens accepted on the right-hand side of a state constraint.
+MODE_TOKENS: dict[str, ModeSet] = {
+    SegmentMode.OFF.value: ModeSet(frozenset({SegmentMode.OFF}), SegmentMode.OFF.value),
+    SegmentMode.STEADY.value: ModeSet(frozenset({SegmentMode.STEADY}), SegmentMode.STEADY.value),
+    SegmentMode.FLASHING.value: ModeSet(
+        frozenset({SegmentMode.FLASHING}), SegmentMode.FLASHING.value
+    ),
+    "on": ModeSet(frozenset({SegmentMode.STEADY, SegmentMode.FLASHING}), "on"),
+}
+
+
+@dataclass(frozen=True)
 class StateSpec:
     """A named state, defined as constraints on some or all segments.
 
@@ -314,14 +307,14 @@ class StateSpec:
     """
 
     name: str
-    constraints: Mapping[str, SegmentMode]
+    constraints: Mapping[str, ModeSet]
 
     @property
     def specificity(self) -> int:
         return len(self.constraints)
 
     def matches(self, observed: Mapping[str, SegmentMode]) -> bool:
-        return all(observed.get(seg) is mode for seg, mode in self.constraints.items())
+        return all(allowed.matches(observed.get(seg)) for seg, allowed in self.constraints.items())
 
 
 @dataclass(frozen=True)
@@ -329,8 +322,11 @@ class NodeConfig:
     """A complete, validated node configuration."""
 
     node_id: str
+    sensor: str
     mqtt: MqttConfig
-    camera: CameraConfig
+    #: None on a GPIO node. Nothing camera-shaped is required to run one.
+    camera: CameraConfig | None
+    gpio: GpioConfig
     segments: tuple[SegmentConfig, ...]
     dark_reference: DarkReferenceConfig | None
     detection: DetectionConfig
@@ -339,6 +335,16 @@ class NodeConfig:
     logging: LoggingConfig
     calibration: CalibrationConfig
     path: Path | None = field(default=None, compare=False)
+
+    @property
+    def sample_rate_hz(self) -> float:
+        """How often this node samples, whichever sensor it uses.
+
+        A camera's frame rate and a tap's poll rate are the same quantity as far as
+        anything downstream is concerned, and the health payload should not have to
+        know which kind of node it is describing.
+        """
+        return self.gpio.sample_hz if self.camera is None else self.camera.fps
 
     @property
     def segment_names(self) -> tuple[str, ...]:
@@ -478,18 +484,26 @@ def _parse_color(value: Any, path: str) -> tuple[int, int, int]:
     )
 
 
-def _parse_segments(data: Any, path: str) -> tuple[SegmentConfig, ...]:
+def _parse_segments(data: Any, path: str, sensor: str) -> tuple[SegmentConfig, ...]:
+    """Parse the segment list.
+
+    What a segment needs depends on how the node senses it: a camera segment is an ROI
+    and a brightness threshold, a GPIO segment is a pin. Requiring both would force a
+    GPIO node to invent ROIs it will never use.
+    """
     if not isinstance(data, Sequence) or isinstance(data, (str, bytes)):
         _fail(path, f"expected a list of segments, got {type(data).__name__}")
     if not data:
         _fail(path, "at least one segment is required")
 
+    is_camera = sensor == "camera"
     segments: list[SegmentConfig] = []
     seen: set[str] = set()
+    pins: dict[int, str] = {}
     for i, raw in enumerate(data):
         item_path = f"{path}[{i}]"
         item = _as_mapping(raw, item_path)
-        _reject_unknown(item, ("name", "roi", "threshold", "color"), item_path)
+        _reject_unknown(item, ("name", "roi", "threshold", "color", "pin"), item_path)
         name = _string(_require(item, "name", item_path), f"{item_path}.name")
         if not name.strip():
             _fail(f"{item_path}.name", "must not be empty")
@@ -498,16 +512,43 @@ def _parse_segments(data: Any, path: str) -> tuple[SegmentConfig, ...]:
         if name in seen:
             _fail(f"{item_path}.name", f"duplicate segment name {name!r}")
         seen.add(name)
+        if is_camera:
+            if item.get("pin") is not None:
+                _fail(f"{item_path}.pin", "only applies when sensor is 'gpio'")
+            roi = Roi.parse(_require(item, "roi", item_path), f"{item_path}.roi")
+            threshold = _number(
+                _require(item, "threshold", item_path),
+                f"{item_path}.threshold",
+                minimum=0,
+                maximum=255,
+            )
+            pin = None
+        else:
+            if item.get("roi") is not None:
+                _fail(f"{item_path}.roi", "only applies when sensor is 'camera'")
+            roi = None
+            # A pin reads 0 or 255, so the threshold is a formality -- but keeping the
+            # field means the whole downstream pipeline stays identical.
+            threshold = _number(
+                item.get("threshold", 90), f"{item_path}.threshold", minimum=0, maximum=255
+            )
+            pin = _number(
+                _require(item, "pin", item_path),
+                f"{item_path}.pin",
+                integer=True,
+                minimum=0,
+                maximum=27,
+            )
+            if pin in pins:
+                _fail(f"{item_path}.pin", f"pin {pin} is already used by {pins[pin]!r}")
+            pins[pin] = name
+
         segments.append(
             SegmentConfig(
                 name=name,
-                roi=Roi.parse(_require(item, "roi", item_path), f"{item_path}.roi"),
-                threshold=_number(
-                    _require(item, "threshold", item_path),
-                    f"{item_path}.threshold",
-                    minimum=0,
-                    maximum=255,
-                ),
+                roi=roi,
+                threshold=threshold,
+                pin=pin,
                 color=(
                     None
                     if item.get("color") is None
@@ -516,6 +557,24 @@ def _parse_segments(data: Any, path: str) -> tuple[SegmentConfig, ...]:
             )
         )
     return tuple(segments)
+
+
+def _parse_gpio(data: Any, path: str) -> GpioConfig:
+    data = _as_mapping(data, path)
+    _reject_unknown(data, ("sample_hz", "active_low", "pull"), path)
+    active_low = _boolean(data.get("active_low", True), f"{path}.active_low")
+    pull = _string(data.get("pull", "up"), f"{path}.pull", choices=("up", "down", "none"))
+    # The two settings are not independent. An optocoupler that drags the pin low needs
+    # the pin resting high, or the pull fights the sensor and the input never changes.
+    if pull == "up" and not active_low:
+        _fail(f"{path}.pull", "'up' contradicts active_low: false; use pull: down")
+    if pull == "down" and active_low:
+        _fail(f"{path}.pull", "'down' contradicts active_low: true; use pull: up")
+    return GpioConfig(
+        sample_hz=_number(data.get("sample_hz", 100.0), f"{path}.sample_hz", minimum=1),
+        active_low=active_low,
+        pull=pull,
+    )
 
 
 def _parse_dark_reference(data: Any, path: str) -> DarkReferenceConfig | None:
@@ -753,11 +812,19 @@ def _parse_states(data: Any, path: str, segment_names: Sequence[str]) -> tuple[S
             )
         _reject_unknown(constraints_raw, segment_names, item_path)
 
-        constraints: dict[str, SegmentMode] = {}
+        constraints: dict[str, ModeSet] = {}
         for seg, mode_raw in constraints_raw.items():
             mode_path = f"{item_path}.{seg}"
-            mode = _string(mode_raw, mode_path, choices=[m.value for m in SegmentMode])
-            constraints[seg] = SegmentMode(mode)
+            if isinstance(mode_raw, bool):
+                # YAML 1.1 reads bare on/off/yes/no as booleans, which is exactly the
+                # trap this field invites.
+                _fail(
+                    mode_path,
+                    f"got the boolean {mode_raw}. YAML reads unquoted on/off as "
+                    'booleans -- write "on" or "off" in quotes',
+                )
+            token = _string(mode_raw, mode_path, choices=sorted(MODE_TOKENS))
+            constraints[seg] = MODE_TOKENS[token]
         specs.append(StateSpec(name=name, constraints=constraints))
 
     # Two states with an identical constraint set can never be told apart.
@@ -818,8 +885,10 @@ def parse_config(raw: Any, *, path: Path | None = None, base_dir: Path | None = 
     data = _as_mapping(raw, "")
     allowed = (
         "node_id",
+        "sensor",
         "mqtt",
         "camera",
+        "gpio",
         "segments",
         "dark_reference",
         "detection",
@@ -838,19 +907,31 @@ def parse_config(raw: Any, *, path: Path | None = None, base_dir: Path | None = 
             "MQTT topic segment)",
         )
 
-    camera = _parse_camera(_require(data, "camera", ""), "camera", base_dir)
-    segments = _parse_segments(_require(data, "segments", ""), "segments")
-    for i, seg in enumerate(segments):
-        seg.roi.check_within(camera.width, camera.height, f"segments[{i}].roi")
+    sensor = _string(data.get("sensor", "camera"), "sensor", choices=SENSORS)
+    segments = _parse_segments(_require(data, "segments", ""), "segments", sensor)
 
-    dark_reference = _parse_dark_reference(data.get("dark_reference"), "dark_reference")
-    if dark_reference is not None:
-        dark_reference.roi.check_within(camera.width, camera.height, "dark_reference.roi")
+    camera: CameraConfig | None = None
+    dark_reference: DarkReferenceConfig | None = None
+    if sensor == "camera":
+        camera = _parse_camera(_require(data, "camera", ""), "camera", base_dir)
+        for i, seg in enumerate(segments):
+            assert seg.roi is not None  # guaranteed by _parse_segments for this sensor
+            seg.roi.check_within(camera.width, camera.height, f"segments[{i}].roi")
+        dark_reference = _parse_dark_reference(data.get("dark_reference"), "dark_reference")
+        if dark_reference is not None:
+            dark_reference.roi.check_within(camera.width, camera.height, "dark_reference.roi")
+    else:
+        # A GPIO node has no frame, so nothing camera-shaped may be required of it.
+        for key in ("camera", "dark_reference"):
+            if data.get(key) is not None:
+                _fail(key, f"only applies when sensor is 'camera', not {sensor!r}")
 
     return NodeConfig(
         node_id=node_id,
+        sensor=sensor,
         mqtt=_parse_mqtt(data.get("mqtt"), "mqtt"),
         camera=camera,
+        gpio=_parse_gpio(data.get("gpio"), "gpio"),
         segments=segments,
         dark_reference=dark_reference,
         detection=_parse_detection(data.get("detection"), "detection"),

@@ -1,0 +1,67 @@
+# Deployed rules config for the Pi. Same as config/rules.yaml but pointing at the
+# broker and database paths that exist on the node itself.
+
+mqtt:
+  host: localhost          # mosquitto runs on the Pi alongside the node
+  port: 1883
+  base_topic: shop/lights
+
+ntfy:
+  server: https://ntfy.sh
+  topic: CHANGEME-pick-a-long-random-topic
+
+database: /var/lib/stacklight/history.sqlite
+
+rules:
+  - state: error
+    title: "Machine fault"
+    message: "Red light is on. The press has stopped and needs you."
+    priority: high
+    tags: [rotating_light]
+    cooldown_s: 120
+    escalate_after_s: 900
+    escalate_priority: urgent
+    escalate_max: 4
+
+  - state: done
+    title: "Machine run complete"
+    message: "Green light. The run finished and the press is waiting."
+    priority: default
+    tags: [white_check_mark]
+    cooldown_s: 60
+
+  - state: unknown
+    title: "Machine light unreadable"
+    message: "The node cannot interpret the light. Check the tap."
+    priority: default
+    tags: [grey_question]
+    cooldown_s: 3600
+
+  - state: clear
+    notify: false
+
+quiet_hours:
+  enabled: false
+  start: "22:00"
+  end: "06:00"
+  override_states: [error]
+
+watchdog:
+  enabled: true
+  heartbeat_timeout_s: 60
+  priority: high
+  repeat_s: 1800
+
+# Note the limitation this exists for: with the broker, the node and the rules engine
+# all on the same Pi, a total failure of that Pi takes the watchdog with it. The
+# staleness rule is the only in-band signal left, and even it cannot fire from a dead
+# machine. Accepted for now; an off-box check is the eventual answer.
+staleness:
+  enabled: false
+  after_hours: 10
+  between: ["07:00", "19:00"]
+  priority: default
+
+logging:
+  level: INFO
+  format: text

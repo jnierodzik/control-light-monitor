@@ -21,17 +21,31 @@ from .types import UNKNOWN_STATE, SegmentMode
 
 
 def _describe(config: NodeConfig) -> str:
-    lens = config.camera.lens_position if config.camera.lens_position is not None else "auto"
     best, worst = detection_latency_bounds(config.detection)
     lines = [
         f"node_id:     {config.node_id}",
         f"config:      {config.path}",
-        f"camera:      {config.camera.source} "
-        f"{config.camera.width}x{config.camera.height} @ {config.camera.fps:g}fps",
-        f"exposure:    {config.camera.exposure_us}us  gain {config.camera.analogue_gain:g}  "
-        f"awb {'on' if config.camera.awb_enable else 'off'}  "
-        f"lens {lens}",
-        f"metric:      {config.detection.metric}",
+        f"sensor:      {config.sensor}",
+    ]
+
+    if config.camera is not None:
+        lens = config.camera.lens_position if config.camera.lens_position is not None else "auto"
+        lines += [
+            f"camera:      {config.camera.source} "
+            f"{config.camera.width}x{config.camera.height} @ {config.camera.fps:g}fps",
+            f"exposure:    {config.camera.exposure_us}us  gain {config.camera.analogue_gain:g}  "
+            f"awb {'on' if config.camera.awb_enable else 'off'}  "
+            f"lens {lens}",
+            f"metric:      {config.detection.metric}",
+        ]
+    else:
+        lines.append(
+            f"gpio:        {config.gpio.sample_hz:g}Hz  "
+            f"active {'low' if config.gpio.active_low else 'high'}  "
+            f"pull {config.gpio.pull}"
+        )
+
+    lines += [
         f"latency:     {best:.1f}-{worst:.1f}s from light change to committed state "
         f"(window {config.detection.flash_window_s:g}s + debounce "
         f"{config.detection.debounce_s:g}s)",
@@ -39,17 +53,23 @@ def _describe(config: NodeConfig) -> str:
         "segments:",
     ]
     for seg in config.segments:
-        lines.append(
-            f"  {seg.name:<10} roi={seg.roi.as_list()} threshold={seg.threshold:g} "
-            f"color={list(seg.render_color)}"
-        )
-    if config.dark_reference is not None:
-        lines.append(
-            f"  {'[dark ref]':<10} roi={config.dark_reference.roi.as_list()} "
-            f"threshold={config.dark_reference.threshold:g}"
-        )
-    else:
-        lines.append("  [dark ref] not configured -- drift and tamper detection is disabled")
+        if seg.roi is not None:
+            lines.append(
+                f"  {seg.name:<10} roi={seg.roi.as_list()} threshold={seg.threshold:g} "
+                f"color={list(seg.render_color)}"
+            )
+        else:
+            lines.append(f"  {seg.name:<10} GPIO {seg.pin}")
+
+    if config.sensor == "camera":
+        if config.dark_reference is not None:
+            lines.append(
+                f"  {'[dark ref]':<10} roi={config.dark_reference.roi.as_list()} "
+                f"threshold={config.dark_reference.threshold:g}"
+            )
+        else:
+            lines.append("  [dark ref] not configured -- drift and tamper detection is disabled")
+
     lines.append("states:")
     for spec in config.states:
         constraints = ", ".join(f"{k}={v}" for k, v in spec.constraints.items())
@@ -139,17 +159,72 @@ def _reading_row(reading: Reading, names: tuple[str, ...], t0: float) -> str:
     )
 
 
+def _detect_header(config: NodeConfig) -> tuple[str, tuple[str, ...]]:
+    names = config.segment_names
+    best, worst = detection_latency_bounds(config.detection)
+    print(f"expected latency {best:.1f}-{worst:.1f}s after each light change\n")
+    header_values = "  ".join(f"{n:>6}" for n in names)
+    header_modes = " ".join(f"{n:<8}" for n in names)
+    header = (
+        f"{'t':>7}  {header_values}   dark  | {header_modes} | "
+        f"{'candidate':<9} {'state':<9} confidence"
+    )
+    print(header)
+    print("-" * len(header))
+    return header, names
+
+
+def _cmd_detect_gpio(config: NodeConfig, args: argparse.Namespace) -> int:
+    """Watch the electrical tap: pin states, resolved modes, committed state."""
+    from .sources.gpio import GpioSampler
+
+    for flag in ("demo", "fast", "mode", "source"):
+        if getattr(args, flag, None):
+            print(
+                f"error: --{flag.replace('_', '-')} applies to camera nodes only", file=sys.stderr
+            )
+            return 2
+
+    hz = config.gpio.sample_hz
+    print(
+        f"tapping {', '.join(f'{s.name}=GPIO{s.pin}' for s in config.segments)} "
+        f"at {hz:g}Hz, active {'low' if config.gpio.active_low else 'high'}\n"
+    )
+    _, names = _detect_header(config)
+
+    detector = Detector(config)
+    every = max(1, round(hz * args.interval))
+    limit = args.frames if args.frames else round(args.seconds * hz)
+
+    t0: float | None = None
+    with GpioSampler.from_config(config) as sampler:
+        for sample in sampler.samples(limit=limit):
+            reading = detector.update_values(
+                t=sample.t, wall=sample.wall, seq=sample.seq, values=sample.values
+            )
+            if t0 is None:
+                t0 = reading.t
+            if reading.changed:
+                print(f"{_reading_row(reading, names, t0)}   <-- COMMITTED {reading.state}")
+            elif sample.seq % every == 0:
+                print(_reading_row(reading, names, t0))
+    return 0
+
+
 def _cmd_detect(args: argparse.Namespace) -> int:
     """Run the detection engine and print what it sees.
 
-    This is the tuning tool: watch the raw brightness numbers next to the mode each
-    segment resolves to, and see exactly when a state commits.
+    The tuning tool for whichever sensor the config names: raw values beside the mode
+    each segment resolves to, and exactly when a state commits.
     """
     from .clock import VirtualClock
     from .sources import create_source
     from .sources.synthetic import ScriptStep, SyntheticSource
 
     config = load_config(args.config)
+    if config.sensor == "gpio":
+        return _cmd_detect_gpio(config, args)
+
     # --fast drives the source from a virtual clock, so a 25-second sequence finishes
     # immediately instead of taking 25 seconds.
     clock = VirtualClock() if args.fast else None
@@ -174,17 +249,7 @@ def _cmd_detect(args: argparse.Namespace) -> int:
             offset += seconds
         print()
 
-    names = config.segment_names
-    best, worst = detection_latency_bounds(config.detection)
-    print(f"expected latency {best:.1f}-{worst:.1f}s after each light change\n")
-    header_values = "  ".join(f"{n:>6}" for n in names)
-    header_modes = " ".join(f"{n:<8}" for n in names)
-    header = (
-        f"{'t':>7}  {header_values}   dark  | {header_modes} | "
-        f"{'candidate':<9} {'state':<9} confidence"
-    )
-    print(header)
-    print("-" * len(header))
+    _, names = _detect_header(config)
 
     detector = Detector(config)
     every = max(1, round(config.camera.fps * args.interval))
@@ -214,11 +279,19 @@ def _cmd_node(args: argparse.Namespace) -> int:
     from .node import Node, availability_will
     from .publisher import MqttPublisher, Publisher, RecordingPublisher
     from .sources import create_source
+    from .sources.gpio import GpioSampler
 
     config = load_config(args.config)
     configure_logging(args.log_level or config.logging.level, config.logging.format)
     log = logging.getLogger("stacklight.node")
-    source = create_source(config, override=args.source)
+
+    if config.sensor == "gpio":
+        if args.source:
+            print("error: --source applies to camera nodes only", file=sys.stderr)
+            return 2
+        source = GpioSampler.from_config(config)
+    else:
+        source = create_source(config, override=args.source)
 
     node: Node
     publisher: Publisher
@@ -262,6 +335,91 @@ def _cmd_node(args: argparse.Namespace) -> int:
         print(f"\ndry run published {len(publisher.messages)} message(s):")
         for topic, count in sorted(counts.items()):
             print(f"  {count:5d}  {topic}")
+    return 0
+
+
+def _cmd_rules(args: argparse.Namespace) -> int:
+    """Run the rules engine: subscribe to node state, notify, log history."""
+    import signal
+
+    from .rules.config import load_rules_config
+    from .rules.engine import RulesEngine
+    from .rules.notify import NtfyNotifier, RecordingNotifier
+    from .rules.service import RulesService
+    from .rules.store import History
+
+    config = load_rules_config(args.config)
+    configure_logging(args.log_level or config.logging.level, config.logging.format)
+    log = logging.getLogger("stacklight.rules")
+
+    notifier = RecordingNotifier() if args.dry_run else NtfyNotifier(config.ntfy)
+    if args.dry_run:
+        print(f"dry run: nothing will be sent to {config.ntfy.server}/{config.ntfy.topic}")
+
+    with History(config.database) as history:
+        engine = RulesEngine(config, notifier, history)
+        service = RulesService(config, engine)
+
+        def handle_signal(signum: int, _frame: object) -> None:
+            log.info("shutting down", extra={"signal": signal.Signals(signum).name})
+            service.stop()
+
+        signal.signal(signal.SIGINT, handle_signal)
+        signal.signal(signal.SIGTERM, handle_signal)
+
+        if not service.connect(args.connect_timeout):
+            # Not fatal: the broker may come up later, and a rules process that keeps
+            # retrying is more useful than one that exits.
+            log.warning(
+                "broker not reachable yet, continuing and retrying in the background",
+                extra={"host": config.mqtt.host, "port": config.mqtt.port},
+            )
+        try:
+            service.run(max_seconds=args.seconds)
+        finally:
+            service.disconnect()
+
+    if isinstance(notifier, RecordingNotifier):
+        print(f"\ndry run would have sent {len(notifier.sent)} notification(s):")
+        for sent in notifier.sent:
+            print(f"  [{sent.priority:<7}] {sent.title} -- {sent.message}")
+    return 0
+
+
+def _cmd_history(args: argparse.Namespace) -> int:
+    """Summarise the event log: how often each state, and how long it was left."""
+    from .rules.config import load_rules_config
+    from .rules.store import History
+
+    config = load_rules_config(args.config)
+    with History(config.database) as history:
+        rows = history.transitions(args.node, limit=args.limit)
+        if not rows:
+            print(f"no transitions recorded in {config.database}")
+            return 0
+
+        nodes = sorted({row["node_id"] for row in rows})
+        for node in nodes:
+            counts = history.count_states(node)
+            print(f"{node}:")
+            for state, count in counts.items():
+                dwells = history.dwell_times(node, state)
+                if dwells:
+                    mean = sum(dwells) / len(dwells)
+                    print(
+                        f"  {state:<10} {count:>5}x   mean dwell {mean / 60:6.1f} min"
+                        f"   longest {max(dwells) / 60:6.1f} min"
+                    )
+                else:
+                    print(f"  {state:<10} {count:>5}x")
+            print()
+
+        print(f"last {min(len(rows), args.limit)} transitions, newest first:")
+        for row in rows:
+            print(
+                f"  {row['ts']:<22} {row['node_id']:<10} "
+                f"{row['previous'] or '-'!s:<9} -> {row['state']}"
+            )
     return 0
 
 
@@ -337,6 +495,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_node.add_argument("--seconds", type=float, default=None, help="stop after N seconds")
     p_node.add_argument("--connect-timeout", type=float, default=5.0)
     p_node.set_defaults(func=_cmd_node)
+
+    p_rules = sub.add_parser("rules", help="run the rules engine: notify and log history")
+    p_rules.add_argument("config", help="path to the rules YAML config")
+    p_rules.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="evaluate rules and record what would be sent, without notifying",
+    )
+    p_rules.add_argument("--seconds", type=float, default=None, help="stop after N seconds")
+    p_rules.add_argument("--connect-timeout", type=float, default=10.0)
+    p_rules.set_defaults(func=_cmd_rules)
+
+    p_history = sub.add_parser("history", help="summarise the recorded event log")
+    p_history.add_argument("config", help="path to the rules YAML config")
+    p_history.add_argument("--node", default=None, help="limit to one node id")
+    p_history.add_argument("--limit", type=int, default=20)
+    p_history.set_defaults(func=_cmd_history)
     return parser
 
 
@@ -353,6 +528,11 @@ def main(argv: list[str] | None = None) -> int:
 def node_main(argv: list[str] | None = None) -> int:
     """Entry point for the ``stacklight-node`` console script and the systemd unit."""
     return main(["node", *(argv if argv is not None else sys.argv[1:])])
+
+
+def rules_main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``stacklight-rules`` console script and the systemd unit."""
+    return main(["rules", *(argv if argv is not None else sys.argv[1:])])
 
 
 if __name__ == "__main__":

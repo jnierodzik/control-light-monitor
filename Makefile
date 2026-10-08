@@ -4,7 +4,7 @@
 CONFIG ?= config/dev-synthetic.yaml
 UV     ?= uv
 
-.PHONY: help setup dev dry-run node test lint fmt calibrate bootstrap deploy logs restart probe clean
+.PHONY: help setup dev dry-run node rules test lint fmt calibrate stage install-cmd bootstrap deploy logs restart probe clean
 
 help:
 	@echo "setup      install the dev environment (uv, Python 3.11)"
@@ -17,6 +17,8 @@ help:
 	@echo "calibrate  serve the calibration web UI"
 	@echo ""
 	@echo "On the Pi (override PI, PI_USER, NODE):"
+	@echo "stage      copy code + build the venv in ~/stacklight (no sudo, no systemd)"
+	@echo "install-cmd print the one-time root setup to run on the Pi"
 	@echo "bootstrap  one-time: apt packages, dirs, and a --system-site-packages venv"
 	@echo "deploy     rsync the code, install the config and the systemd unit"
 	@echo "logs       follow journalctl for the node"
@@ -38,6 +40,12 @@ dry-run:
 node:
 	$(UV) run stacklight node $(CONFIG)
 
+rules:
+	$(UV) run stacklight rules config/rules.yaml
+
+history:
+	$(UV) run stacklight history config/rules.yaml
+
 test:
 	$(UV) run pytest
 
@@ -56,12 +64,32 @@ calibrate:
 #   make deploy PI=stacklight.local PI_USER=jesse NODE=machine1
 PI      ?= stacklight.local
 PI_USER ?= jnierodzik
+# The config basename under config/, which is also the systemd instance name:
+# stacklight-node@machine1 reads /etc/stacklight/machine1.yaml. Defaults to the tap,
+# not the camera -- machine1.yaml needs picamera2 and a camera that is not attached.
 NODE    ?= machine1
 REMOTE  ?= $(PI_USER)@$(PI)
 # -4 is not optional: <host>.local resolves to an IPv6 link-local address first, which
 # carries no scope id and so fails with "No route to host".
 SSH     ?= ssh -4
 SCP     ?= scp -4
+
+# Everything needed to run the tap by hand on a freshly flashed Pi, with no sudo and no
+# systemd. This is what gets re-run after a reflash; it takes about a minute.
+#
+#   make stage PI=stacklight.local PI_USER=jnierodzik
+STAGE_DIR ?= stacklight
+stage:
+	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' \
+		--exclude '__pycache__' --exclude 'samples' --exclude '.pytest_cache' \
+		--exclude '.ruff_cache' --exclude 'hardware' ./ $(REMOTE):$(STAGE_DIR)/
+	$(SSH) $(REMOTE) 'cd $(STAGE_DIR) && python3 -m venv --system-site-packages .venv \
+		&& .venv/bin/pip install -q -e . \
+		&& .venv/bin/python -c "import gpiozero, lgpio; print(\"gpio stack OK\")"'
+	$(SSH) $(REMOTE) '$(STAGE_DIR)/.venv/bin/stacklight validate $(STAGE_DIR)/config/machine1.yaml'
+	@echo
+	@echo "Staged. Watch the tap with:"
+	@echo "  $(SSH) $(REMOTE) '$(STAGE_DIR)/.venv/bin/stacklight detect $(STAGE_DIR)/config/machine1.yaml'"
 
 # One-time setup on a fresh Pi: system packages, directories, and the venv that can see
 # apt's picamera2.
@@ -72,15 +100,33 @@ bootstrap:
 	@echo
 	@echo "Now: make deploy PI=$(PI) PI_USER=$(PI_USER) NODE=$(NODE)"
 
+# One command the user runs ON the Pi, interactively, because every step needs root.
+# Printed rather than executed: sudo wants a password and ssh cannot supply one.
+install-cmd:
+	@echo "Run this on the Pi (ssh $(REMOTE)), it will ask for your password:"
+	@echo
+	@echo "  sudo apt update && sudo apt install -y mosquitto mosquitto-clients python3-picamera2 python3-gpiozero python3-lgpio rsync"
+	@echo "  sudo systemctl enable --now mosquitto"
+	@echo "  sudo mkdir -p /opt/stacklight /etc/stacklight /var/lib/stacklight"
+	@echo "  sudo chown -R $(PI_USER) /opt/stacklight /etc/stacklight /var/lib/stacklight"
+	@echo "  python3 -m venv --system-site-packages /opt/stacklight/.venv"
+	@echo
+	@echo "Then back here:  make deploy PI=$(PI) PI_USER=$(PI_USER) NODE=$(NODE)"
+
 deploy:
-	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' --exclude '__pycache__' 		--exclude 'samples' --exclude '.pytest_cache' --exclude '.ruff_cache' 		./ $(REMOTE):/opt/stacklight/
+	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' --exclude '__pycache__' 		--exclude 'samples' --exclude '.pytest_cache' --exclude '.ruff_cache' --exclude 'hardware' 		./ $(REMOTE):/opt/stacklight/
 	$(SSH) $(REMOTE) '/opt/stacklight/.venv/bin/pip install -q -e /opt/stacklight'
 	$(SCP) config/$(NODE).yaml $(REMOTE):/etc/stacklight/$(NODE).yaml
-	$(SSH) $(REMOTE) 'sudo cp /opt/stacklight/systemd/stacklight-node@.service /etc/systemd/system/ && sudo systemctl daemon-reload'
+	$(SCP) config/rules-pi.yaml $(REMOTE):/etc/stacklight/rules.yaml
 	$(SSH) $(REMOTE) '/opt/stacklight/.venv/bin/stacklight validate /etc/stacklight/$(NODE).yaml'
 	@echo
-	@echo "Deployed. Start it with:"
-	@echo "  $(SSH) $(REMOTE) 'sudo systemctl enable --now stacklight-node@$(NODE)'"
+	@echo "Code and configs are in place. Finish on the Pi (needs your password):"
+	@echo
+	@echo "  sudo cp /opt/stacklight/systemd/*.service /etc/systemd/system/"
+	@echo "  sudo systemctl daemon-reload"
+	@echo "  sudo systemctl enable --now stacklight-node@$(NODE) stacklight-rules"
+	@echo
+	@echo "Then:  make logs PI=$(PI) PI_USER=$(PI_USER) NODE=$(NODE)"
 
 # Follow the node's log on the Pi.
 logs:
