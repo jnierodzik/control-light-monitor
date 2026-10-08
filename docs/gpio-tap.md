@@ -142,15 +142,26 @@ not necessarily the same potential, and the Pi 5's GPIO is 3.3V with no toleranc
 surprises from an inductive industrial environment.
 
 ```
-  machine side          |  isolated  |        Pi side
-                        |            |
-  Red wire ───[R]──▶|───┼────────────┼── OUT ──→ GPIO 17
-  Gray (common) ────────┼────────────┼── GND ──→ Pi GND
-                        |            |   VCC ──→ Pi 3.3V
+        machine side         |  barrier  |        Pi side
+                             |           |
+  Red leg (+24V) ──▶ IN+ ────┤  ▶|   ▷   ├──── OUT ──→ GPIO 17
+  Gray (common)  ──▶ IN- ────┤           ├──── VCC ──→ Pi 3.3V
+                             |           ├──── GND ──→ Pi GND
+     nothing crosses ────────┘           └──────── nothing crosses
 ```
 
+Each channel takes a lamp leg on `IN+` and gray on `IN-`. Gray is the *machine's*
+common and it stops at the optocoupler's input. The Pi's `GND` is a different net
+entirely, and the two never meet.
+
 **The isolation is only real if the two grounds stay apart.** Do not bond the machine's
-gray to the Pi's ground anywhere. That single wire would undo the whole point.
+gray to the Pi's ground anywhere. That single wire would undo the whole point — the tap
+would still appear to work, which is what makes the mistake worth naming here rather
+than leaving to be inferred from the diagram.
+
+(An earlier version of this diagram drew gray crossing to `Pi GND`, contradicting the
+warning directly beneath it. The bench rig was always wired as above; the drawing was
+wrong, not the hardware.)
 
 Board: 4-channel, **24V in → 3.3V out**. Three channels used, one spare. Note the
 direction — most cheap modules are sold the other way round, 3.3V → 24V, for driving
