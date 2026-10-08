@@ -370,6 +370,10 @@ omitted, so the geometry you calibrate is the geometry you test.
 stock-tools procedure for proving the underexposure technique on your actual light before
 any of this code runs on the Pi.
 
+**What it is built from: [`docs/parts.md`](docs/parts.md)** — every part, with the
+reason it is that part rather than a similar-looking one, and the measured facts about
+the light's connector and wiring.
+
 
 `picamera2` is not pip-installable in the normal way. It comes from apt, and the venv
 must be able to see it:
