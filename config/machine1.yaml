@@ -20,8 +20,13 @@ mqtt:
 
 gpio:
   sample_hz: 100        # ~67 samples per cycle of a 1.5Hz blink, against 15fps of video
-  active_low: true      # the opto sinks the pin when the lamp lead is energised
-  pull: up
+  # The MT-301R4P-P sources rather than sinks -- the -P is PNP output. It drives the pin
+  # HIGH when the lamp lead is energised and holds it low through an on-board pull-down
+  # when idle. Measured 2026-10-08: with the Pi pulling up and the board pulling down,
+  # every output sat at 1.158V, right on the input threshold, which is why readings
+  # flipped at random. Pulling down instead puts idle at a solid 0V.
+  active_low: false
+  pull: down
 
 segments:
   - name: red

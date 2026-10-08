@@ -55,6 +55,34 @@ channel.
 The lamp is also steady when energised, with no self-flashing, which is the final
 confirmation of box diagram 2.
 
+### The optocoupler board sources; it does not sink
+
+The `MT-301R4P-P` drives its output **HIGH** when the field input is energised and holds
+it low through an on-board pull-down when idle. The `-P` suffix is PNP output. Config is
+`active_low: false`, `pull: down`.
+
+This was configured backwards at first, and the symptom is worth remembering because it
+did not look like a polarity error. With the Pi pulling up (~50k) against the board's
+pull-down (~27k), every output sat at **1.158 V** — not a logic level at all, but a
+divider landing almost exactly on the Pi's input threshold. Readings flipped at random:
+one night the pins read dark with a single unexplained 13-second excursion, the next
+morning they read permanently lit with nothing connected. It looked like interference.
+
+A voltmeter on the idle output settled it in twenty seconds: three channels reading an
+identical 1.158 V is a divider, not noise. With `pull: down` the idle level is a solid
+0 V and the ambiguity is gone.
+
+**Verified end to end on 2026-10-08**, real 24V on real lamp leads:
+
+| Lamp energised | Values (red/green/buzzer) | Committed state |
+| --- | --- | --- |
+| none | 0 / 0 / 0 | `clear` |
+| red | **255** / 0 / 0 | `error` |
+| green | 0 / **255** / 0 | `done` |
+| buzzer | 0 / 0 / **255** | `clear` (buzzer names no state) |
+
+No crosstalk between channels in either direction.
+
 ### The buzzer line is a steady signal
 
 Measured on the bench: with the purple lead energised, the buzzer beeps on a cadence
