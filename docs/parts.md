@@ -71,12 +71,38 @@ Confirmed as wired, 2026-10-08:
 | `3+` | Purple | `O3` | 22 | `buzzer` |
 | `4+` | — | `O4` | — | spare |
 
-Gray (the harness's red-striped wire, cable position 1) goes to the bridged `-` chain.
+Gray (cable position 1) goes to the bridged `-` chain.
 The blue terminals are 3.3V and ground from the Pi.
 
 This map was verified by behaviour long before it was written down — energising one lamp
 at a time and watching which segment reported. Recorded here because "it works" is not
 something the next person can check against.
+
+### Sense wire colours
+
+The four wires from the harness Wagos to the optocoupler inputs are cut from 22 AWG
+spool stock. The light's own wires are gray / green / red / purple; the spools on hand
+are white, green, red, blue, black and yellow. So:
+
+| Signal | Sense wire | Goes to |
+| --- | --- | --- |
+| Gray, common | **black** | the bridged `-` chain |
+| Green lamp | **green** | `2+` |
+| Red lamp | **red** | `1+` |
+| Purple, buzzer | **blue** | `3+` |
+
+White and yellow are unused, and are the colours to reach for if a fourth channel is
+ever tapped.
+
+Two of these match the light's own colours exactly, which is the point: a wire whose
+colour states its job does not have to be traced. Black for the common is the one that
+matters most — it is the universal convention for a return, and using it for a signal
+here would invite exactly the polarity mistake that can damage an optocoupler input.
+Blue standing in for purple is the only substitution, and the only thing to remember.
+
+Note that the harness's own conductors are **not** colour-coded this way: the extension
+lead is three black wires and one red, where red marks cable position 1. The sense wires
+are the colour-coded layer, and they start at the Wagos.
 
 ### On the extension lead
 
