@@ -64,6 +64,9 @@ calibrate:
 #   make deploy PI=stacklight.local PI_USER=jesse NODE=machine1
 PI      ?= stacklight.local
 PI_USER ?= jnierodzik
+# The config basename under config/, which is also the systemd instance name:
+# stacklight-node@machine1 reads /etc/stacklight/machine1.yaml. Defaults to the tap,
+# not the camera -- machine1.yaml needs picamera2 and a camera that is not attached.
 NODE    ?= machine1
 REMOTE  ?= $(PI_USER)@$(PI)
 # -4 is not optional: <host>.local resolves to an IPv6 link-local address first, which
