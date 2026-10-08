@@ -69,8 +69,8 @@ EPS = 1.0
 PCB_TOP = FLOOR + POST_H + 1.6
 SLOT_Z0 = PCB_TOP - 1.5
 SLOT_Z1 = PCB_TOP + 18.0  # Ethernet is the tallest connector
-FRONT_SLOT_X = (8.0, 85.0)   # along the Pi's 85mm edge
-LEFT_SLOT_Y = (8.0, 56.0)    # along the Pi's 56mm edge
+FRONT_SLOT_X = (8.0, 85.0)  # along the Pi's 85mm edge
+LEFT_SLOT_Y = (8.0, 56.0)  # along the Pi's 56mm edge
 
 # Tap harness entry, in the right-hand wall beside the Wago strip
 CABLE_D = 14.0  # passes a JST-XH housing
@@ -131,9 +131,7 @@ def difference(parts):
 def hole_positions(origin, dx, dy, inset_x, inset_y):
     ox, oy = origin
     return [
-        (WALL + ox + inset_x + i * dx, WALL + oy + inset_y + j * dy)
-        for i in (0, 1)
-        for j in (0, 1)
+        (WALL + ox + inset_x + i * dx, WALL + oy + inset_y + j * dy) for i in (0, 1) for j in (0, 1)
     ]
 
 
@@ -251,9 +249,7 @@ def base() -> trimesh.Trimesh:
 
     # Tap harness entries, right-hand wall
     for y in CABLE_YS:
-        cuts.append(
-            cyl_x(CABLE_D, WALL + 2 * EPS, (WALL + INNER_X - EPS, WALL + y, CABLE_Z))
-        )
+        cuts.append(cyl_x(CABLE_D, WALL + 2 * EPS, (WALL + INNER_X - EPS, WALL + y, CABLE_Z)))
 
     return clean(difference([union(solids), *cuts]))
 
@@ -367,8 +363,10 @@ def main() -> None:
             if name == "port-test-corner":  # only the Pi's four are in the section
                 centres = hole_positions(PI_AT, PI_HOLE_DX, PI_HOLE_DY, PI_INSET, PI_INSET)
             found, total = posts_present(part, centres)
-            print(f"    board posts present {found}/{total}"
-                  f"  -> {'OK' if found == total else 'MISSING POSTS'}")
+            print(
+                f"    board posts present {found}/{total}"
+                f"  -> {'OK' if found == total else 'MISSING POSTS'}"
+            )
             failed |= found != total
     if failed:
         raise SystemExit("refusing to ship a mesh a slicer will reject")
