@@ -340,3 +340,82 @@ def test_pull_down_with_active_low_is_rejected():
     data["gpio"] = {"active_low": True, "pull": "down"}
     with pytest.raises(ConfigError, match="contradicts active_low"):
         parse_config(data)
+
+
+# -- the tap node publishes to MQTT ------------------------------------------------
+
+
+def run_node(phases, *, hz=100.0):
+    """Drive a full Node from fake pins and record what it publishes."""
+    import json
+
+    from stacklight.node import Node
+    from stacklight.publisher import RecordingPublisher
+
+    reader = FakePinReader()
+    clock = VirtualClock()
+    config = parse_config(gpio_config_dict())
+    sampler = GpioSampler.from_config(config, reader=reader, clock=clock)
+    publisher = RecordingPublisher()
+    node = Node(config, sampler, publisher)
+
+    with node:
+        for duration, active in phases:
+            for pin in (17, 27, 22):
+                reader.set(pin, pin in active)
+            node.run(max_frames=round(duration * hz))
+
+    def payloads(topic):
+        return [json.loads(m.payload) for m in publisher.on(topic)]
+
+    return config, publisher, payloads
+
+
+def test_the_tap_node_publishes_committed_states():
+    """Pins to MQTT with no camera anywhere in the chain."""
+    config, _, payloads = run_node([(4.0, ()), (20.0, (17,)), (6.0, ()), (20.0, (27,))])
+    assert [p["state"] for p in payloads(config.state_topic)] == [
+        "clear",
+        "error",
+        "clear",
+        "done",
+    ]
+
+
+def test_state_payloads_carry_the_raw_pin_values():
+    config, _, payloads = run_node([(4.0, ()), (20.0, (17,))])
+    lit = payloads(config.state_topic)[-1]
+    assert lit["state"] == "error"
+    assert lit["segments"]["red"]["value"] == 255.0
+    assert lit["segments"]["green"]["value"] == 0.0
+    assert lit["segments"]["buzzer"]["value"] == 0.0
+
+
+def test_a_tap_node_publishes_no_snapshots():
+    """There are no pixels to encode. It skips rather than erroring."""
+    config, publisher, _ = run_node([(4.0, ()), (20.0, (17,))])
+    assert publisher.on(config.snapshot_topic) == []
+
+
+def test_heartbeats_report_the_tap_as_the_source():
+    config, _, payloads = run_node([(20.0, ())])
+    beat = payloads(config.health_topic)[-1]
+    assert beat["source"] == "gpio"
+    assert beat["dark_reference"] is None
+    assert "buzzer" in beat["segments"]
+
+
+def test_availability_still_brackets_the_run():
+    config, _, payloads = run_node([(6.0, ())])
+    assert [p["status"] for p in payloads(config.availability_topic)] == [
+        "online",
+        "offline",
+    ]
+
+
+def test_the_buzzer_is_published_without_changing_the_state():
+    config, _, payloads = run_node([(4.0, ()), (20.0, (17, 22))])
+    lit = payloads(config.state_topic)[-1]
+    assert lit["state"] == "error"
+    assert lit["segments"]["buzzer"]["value"] == 255.0
+    assert lit["segments"]["buzzer"]["lit"] is True

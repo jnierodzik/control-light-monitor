@@ -279,11 +279,19 @@ def _cmd_node(args: argparse.Namespace) -> int:
     from .node import Node, availability_will
     from .publisher import MqttPublisher, Publisher, RecordingPublisher
     from .sources import create_source
+    from .sources.gpio import GpioSampler
 
     config = load_config(args.config)
     configure_logging(args.log_level or config.logging.level, config.logging.format)
     log = logging.getLogger("stacklight.node")
-    source = create_source(config, override=args.source)
+
+    if config.sensor == "gpio":
+        if args.source:
+            print("error: --source applies to camera nodes only", file=sys.stderr)
+            return 2
+        source = GpioSampler.from_config(config)
+    else:
+        source = create_source(config, override=args.source)
 
     node: Node
     publisher: Publisher

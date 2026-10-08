@@ -396,6 +396,16 @@ class NodeConfig:
     path: Path | None = field(default=None, compare=False)
 
     @property
+    def sample_rate_hz(self) -> float:
+        """How often this node samples, whichever sensor it uses.
+
+        A camera's frame rate and a tap's poll rate are the same quantity as far as
+        anything downstream is concerned, and the health payload should not have to
+        know which kind of node it is describing.
+        """
+        return self.gpio.sample_hz if self.camera is None else self.camera.fps
+
+    @property
     def segment_names(self) -> tuple[str, ...]:
         return tuple(s.name for s in self.segments)
 
