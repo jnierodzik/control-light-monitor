@@ -54,6 +54,30 @@ energised and holds low through an on-board pull-down. Hence `active_low: false`
 every idle channel — a divider sitting on the input threshold, not a logic level. The
 story is in [gpio-tap.md](gpio-tap.md#the-optocoupler-board-sources-it-does-not-sink).
 
+### Channel map
+
+The board has no shared common: each channel is an independent pair, `1-/1+` through
+`4-/4+`, on the green input terminals. The machine has exactly one common (gray), so the
+three `-` terminals are bridged together and gray feeds the chain. That bridge is what
+makes one return serve three channels, and it lives entirely on the machine side of the
+barrier — it is not a connection to the Pi's ground.
+
+Confirmed as wired, 2026-10-08:
+
+| Input `+` | Lamp leg | Output | GPIO | Segment |
+| --- | --- | --- | --- | --- |
+| `1+` | Red | `O1` | 17 | `red` |
+| `2+` | Green | `O2` | 27 | `green` |
+| `3+` | Purple | `O3` | 22 | `buzzer` |
+| `4+` | — | `O4` | — | spare |
+
+Gray (the harness's red-striped wire, cable position 1) goes to the bridged `-` chain.
+The blue terminals are 3.3V and ground from the Pi.
+
+This map was verified by behaviour long before it was written down — energising one lamp
+at a time and watching which segment reported. Recorded here because "it works" is not
+something the next person can check against.
+
 ### On the extension lead
 
 Verified 2026-10-08 before cutting:
