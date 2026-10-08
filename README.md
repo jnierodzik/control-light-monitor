@@ -59,8 +59,10 @@ This project is being built in reviewable steps.
 - [x] **3. MQTT publisher, heartbeats, retained state** — verified against mosquitto
 - [x] **4. `PiCameraSource`, systemd units, deployment** — pulled ahead of the
       calibration UI, so ROIs get dialled in against the real camera rather than twice
-- [ ] 5. Calibration web UI
-- [ ] 6. Rules engine, ntfy, SQLite logging, watchdog
+- [ ] 5. Calibration web UI — only useful for a camera node; shelved while the live
+      install is the electrical tap
+- [x] **6. Rules engine, ntfy, SQLite logging, watchdog** — running on the Pi, verified
+      lamp-to-phone in about a second
 
 ## Development, with no camera and no Pi
 
@@ -271,6 +273,10 @@ retried on the next frame, and the reconnect callback resends the retained state
 broker's copy is never left stale. A broker that is unreachable at startup is a warning,
 not a fatal error — it may come up later, and a node that samples and retries is more
 useful than one that exits.
+
+The same reasoning applies one hop further out, to the push itself. See
+[Undelivered notifications](docs/gpio-tap.md#undelivered-notifications) — for a latching
+light this is the difference between an alert arriving late and an alert never arriving.
 
 ## Detection
 

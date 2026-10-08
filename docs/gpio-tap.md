@@ -273,6 +273,51 @@ Note for later: because the lamp current does *not* flow through our electronics
 controller still drives the lamp lead whether or not a lamp is attached. The tap would
 therefore report an error correctly even with the light itself removed.
 
+## Undelivered notifications
+
+The annunciator behaviour that shapes the detector also shapes delivery, and it took
+until the services were running on the Pi to notice.
+
+A state indicator would have let delivery failures sort themselves out: the light keeps
+asserting what it is, so if one push is lost the next one carries the same information.
+An annunciator does not. The lamp latches, the node publishes `error` exactly once — on
+the transition — and then nothing further happens until an operator intervenes. There is
+no second transition, so nothing about the machine will ever trigger a second attempt.
+
+So a single failed POST used to mean the alert was gone. The cooldown was correctly not
+claimed, which sounds like the escape hatch but isn't: the next notification requires a
+state change, and a latched lamp produces none. The only trace was a `delivered=0` row in
+SQLite, next to a phone that never buzzed and a press that needed a human. Not academic
+on this unit — its Wi-Fi has been intermittent throughout, and power saving is still on.
+
+The fix is a queue in the engine, retried on the 5-second tick it already runs:
+
+- **Lateness is not a reason to drop an alert.** A latched red lamp is just as true ten
+  minutes on. The retry says how late it is (`delayed 4m12s; attempt 9`) so a stale
+  alert can't read as fresh, but it still goes out. `max_age_s` is only a backstop.
+- **Being overtaken by reality is a reason to drop it.** A queued `error` whose node has
+  since committed a different state is discarded, as is a queued watchdog alert for a
+  node whose heartbeats resumed. That is a statement about the machine rather than the
+  clock, which makes it the right test.
+- **Duplicates collapse.** A light flapping through an outage would otherwise queue one
+  alert per transition and deliver the pile the instant the network returned. One entry
+  per node, kind and state, keeping the newest content and the *original* first-attempt
+  time — so repeating cannot keep an alert alive past `max_age_s`.
+- **The cooldown starts when the alert arrives**, not when it was first attempted. The
+  operator's clock starts at the buzz.
+- **The queue is bounded** (`max_pending`), oldest discarded first, because during a long
+  outage the newest alerts are the ones describing the shop as it is now.
+
+Only the first failure and the final outcome are written to history, with the attempt
+count. A half-hour outage should not write a row every thirty seconds for an alert
+nobody has seen yet.
+
+What this does **not** fix: the Pi hosts the broker, the node and the rules engine, so a
+total failure of the Pi takes the retry queue with it — the queue is in memory, and
+nothing survives to resend. That is the same gap the watchdog has, and it still wants an
+off-box check. The retry covers the case that actually keeps happening, which is the
+network between a working Pi and ntfy.
+
 ## Bench plan
 
 Nothing touches the machine until all of this passes on the bench.

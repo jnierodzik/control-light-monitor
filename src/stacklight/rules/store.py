@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     message     TEXT    NOT NULL,
     escalation  INTEGER NOT NULL DEFAULT 0,
     delivered   INTEGER NOT NULL DEFAULT 0,
-    error       TEXT
+    error       TEXT,
+    attempt     INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS notifications_node_ts ON notifications (node_id, ts);
 """
@@ -80,7 +81,22 @@ class History:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         log.info("history opened", extra={"path": str(self._path)})
+
+    def _migrate(self) -> None:
+        """Add columns that CREATE TABLE IF NOT EXISTS will not add to an existing file.
+
+        There is already a live database on the Pi, so the schema has to be able to
+        grow without being rebuilt. Checked by name rather than by a version number
+        because that stays correct however the file got to its current shape.
+        """
+        added = ("notifications", "attempt", "INTEGER NOT NULL DEFAULT 1")
+        for table, column, decl in (added,):
+            existing = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                log.info("history schema extended", extra={"table": table, "column": column})
 
     def close(self) -> None:
         self._conn.close()
@@ -133,11 +149,13 @@ class History:
         escalation: int = 0,
         delivered: bool = True,
         error: str | None = None,
+        attempt: int = 1,
     ) -> int:
         cursor = self._conn.execute(
             "INSERT INTO notifications"
-            " (node_id, kind, state, ts, priority, title, message, escalation, delivered, error)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " (node_id, kind, state, ts, priority, title, message, escalation, delivered,"
+            "  error, attempt)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 node_id,
                 kind,
@@ -149,6 +167,7 @@ class History:
                 escalation,
                 int(delivered),
                 error,
+                attempt,
             ),
         )
         return int(cursor.lastrowid or 0)

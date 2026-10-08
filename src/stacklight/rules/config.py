@@ -90,6 +90,29 @@ class WatchdogConfig:
 
 
 @dataclass(frozen=True)
+class RetryConfig:
+    """What to do with a notification the network refused to carry.
+
+    Without this a delivery failure is final. That matters here because the machine's
+    light is an annunciator: the node publishes ``error`` once, on the transition, and
+    then the lamp just stays lit. There is no second transition to trigger a second
+    attempt, so one failed POST means the alert is gone for good.
+
+    ``max_age_s`` is the backstop, not the main guard -- a pending alert is normally
+    discarded because a newer state superseded it, which is a statement about the
+    machine rather than about the clock.
+    """
+
+    enabled: bool = True
+    #: Minimum gap between attempts for the same notification.
+    interval_s: float = 30.0
+    #: Give up on a notification older than this.
+    max_age_s: float = 1800.0
+    #: Cap the queue so a long outage cannot grow it without bound.
+    max_pending: int = 32
+
+
+@dataclass(frozen=True)
 class StalenessConfig:
     """Notices when a node is talking but never sees anything happen.
 
@@ -139,6 +162,7 @@ class RulesConfig:
     quiet_hours: QuietHours
     watchdog: WatchdogConfig
     staleness: StalenessConfig
+    retry: RetryConfig
     logging: Any
     path: Path | None = field(default=None, compare=False)
 
@@ -217,6 +241,24 @@ def _parse_watchdog(data: Any, path: str) -> WatchdogConfig:
         priority=_priority(data.get("priority", "high"), f"{path}.priority"),
         repeat_s=_number(data.get("repeat_s", 1800.0), f"{path}.repeat_s", minimum=60),
     )
+
+
+def _parse_retry(data: Any, path: str) -> RetryConfig:
+    data = _as_mapping(data, path)
+    _reject_unknown(data, ("enabled", "interval_s", "max_age_s", "max_pending"), path)
+    retry = RetryConfig(
+        enabled=_boolean(data.get("enabled", True), f"{path}.enabled"),
+        interval_s=_number(data.get("interval_s", 30.0), f"{path}.interval_s", minimum=1),
+        max_age_s=_number(data.get("max_age_s", 1800.0), f"{path}.max_age_s", minimum=1),
+        max_pending=int(_number(data.get("max_pending", 32), f"{path}.max_pending", minimum=1)),
+    )
+    if retry.interval_s > retry.max_age_s:
+        _fail(
+            f"{path}.interval_s",
+            f"{retry.interval_s}s is longer than max_age_s ({retry.max_age_s}s), so a "
+            "queued notification would always age out before it was ever retried",
+        )
+    return retry
 
 
 def _parse_staleness(data: Any, path: str) -> StalenessConfig:
@@ -316,6 +358,7 @@ def parse_rules_config(
         "quiet_hours",
         "watchdog",
         "staleness",
+        "retry",
         "logging",
     )
     _reject_unknown(data, allowed, "")
@@ -332,6 +375,7 @@ def parse_rules_config(
         quiet_hours=_parse_quiet_hours(data.get("quiet_hours"), "quiet_hours"),
         watchdog=_parse_watchdog(data.get("watchdog"), "watchdog"),
         staleness=_parse_staleness(data.get("staleness"), "staleness"),
+        retry=_parse_retry(data.get("retry"), "retry"),
         logging=_parse_logging(data.get("logging"), "logging"),
         path=path,
     )

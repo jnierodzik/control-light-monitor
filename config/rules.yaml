@@ -72,6 +72,20 @@ staleness:
   between: ["07:00", "19:00"]
   priority: default
 
+# What to do when the push itself fails. This matters more here than it looks: the
+# light is an annunciator, so the node publishes `error` once on the transition and
+# then the lamp just stays lit. Nothing about the machine will ever trigger a second
+# attempt, so without this a single failed POST means the alert is gone for good.
+#
+# Alerts are dropped because a newer state superseded them, not because they got old
+# -- a latched red lamp is just as true ten minutes late, and a delivered retry says
+# how late it is. max_age_s is only the backstop.
+retry:
+  enabled: true
+  interval_s: 30          # a Wi-Fi blip clears well inside this
+  max_age_s: 1800
+  max_pending: 32
+
 logging:
   level: INFO
   format: text

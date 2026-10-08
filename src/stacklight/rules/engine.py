@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -31,6 +31,34 @@ KIND_STALE = "staleness"
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _format_delay(seconds: float) -> str:
+    """A human-readable lateness, for a notification that did not go out on time."""
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m{secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
+
+
+@dataclass
+class PendingNotification:
+    """A notification the network would not carry, waiting for another attempt."""
+
+    notification: Notification
+    node_id: str
+    first_attempt: datetime
+    last_attempt: datetime
+    attempts: int = 1
+    #: The state whose cooldown this notification claims, once it is actually sent.
+    mark_state: str | None = None
+
+    def age_s(self, now: datetime) -> float:
+        return (now - self.first_attempt).total_seconds()
 
 
 @dataclass
@@ -68,12 +96,18 @@ class RulesEngine:
         self._history = history
         self._now = now
         self._nodes: dict[str, NodeTracker] = {}
+        self._pending: list[PendingNotification] = []
 
     # -- introspection -------------------------------------------------------------
 
     @property
     def nodes(self) -> Mapping[str, NodeTracker]:
         return dict(self._nodes)
+
+    @property
+    def pending(self) -> tuple[PendingNotification, ...]:
+        """Notifications that failed to send and are waiting for another attempt."""
+        return tuple(self._pending)
 
     def tracker(self, node_id: str) -> NodeTracker:
         if node_id not in self._nodes:
@@ -195,12 +229,190 @@ class RulesEngine:
         because of elapsed time rather than because a message arrived.
         """
         now = self._now()
-        out: list[Notification] = []
+        # Retries come first: a backlog is older than anything we are about to decide,
+        # and draining it keeps a recovered network from reordering the alerts.
+        out: list[Notification] = self._retry_pending(now)
         for tracker in list(self._nodes.values()):
             out += self._check_escalation(tracker, now)
             out += self._check_watchdog(tracker, now)
             out += self._check_staleness(tracker, now)
         return out
+
+    # -- redelivery ----------------------------------------------------------------
+
+    def _superseded_by(self, item: PendingNotification) -> str | None:
+        """Why this pending notification no longer describes the machine, if it doesn't.
+
+        Age is a poor reason to drop an alert -- a latched red lamp is just as true ten
+        minutes late. Being overtaken by reality is a good one.
+        """
+        tracker = self._nodes.get(item.node_id)
+        if tracker is None:
+            return None
+        kind = item.notification.kind
+        if (
+            kind == KIND_STATE
+            and item.mark_state is not None
+            and tracker.state is not None
+            and tracker.state != item.mark_state
+        ):
+            return f"state moved on to '{tracker.state}'"
+        if kind == KIND_WATCHDOG and not tracker.missing:
+            return "node came back before the alert could be sent"
+        return None
+
+    def _retry_pending(self, now: datetime) -> list[Notification]:
+        """Try the queue again, and drop whatever is no longer worth sending."""
+        if not self._pending:
+            return []
+        retry = self._config.retry
+        sent: list[Notification] = []
+        for item in list(self._pending):
+            reason = self._superseded_by(item)
+            if reason is None and item.age_s(now) > retry.max_age_s:
+                reason = f"gave up after {_format_delay(item.age_s(now))} and {item.attempts} tries"
+            if reason is not None:
+                self._pending.remove(item)
+                self._record_attempt(item, now, delivered=False, error=reason)
+                log.warning(
+                    "notification abandoned",
+                    extra={
+                        "node_id": item.node_id,
+                        "title": item.notification.title,
+                        "reason": reason,
+                        "attempts": item.attempts,
+                    },
+                )
+                continue
+
+            if (now - item.last_attempt).total_seconds() < retry.interval_s:
+                continue
+
+            item.attempts += 1
+            item.last_attempt = now
+            # Say that it is late. An alert delivered ten minutes after the fact is
+            # still worth having, but not if it reads as having just happened.
+            late = replace(
+                item.notification,
+                message=(
+                    f"{item.notification.message} "
+                    f"(delayed {_format_delay(item.age_s(now))}; "
+                    f"attempt {item.attempts})"
+                ),
+            )
+            try:
+                self._notifier.send(late)
+            except NotifyError as exc:
+                log.warning(
+                    "notification retry failed",
+                    extra={
+                        "node_id": item.node_id,
+                        "title": item.notification.title,
+                        "attempts": item.attempts,
+                        "error": str(exc),
+                    },
+                )
+                continue
+
+            self._pending.remove(item)
+            if item.mark_state is not None:
+                self.tracker(item.node_id).last_notified[item.mark_state] = now
+            self._record_attempt(item, now, delivered=True, error=None, notification=late)
+            log.info(
+                "notification delivered on retry",
+                extra={
+                    "node_id": item.node_id,
+                    "title": item.notification.title,
+                    "attempts": item.attempts,
+                    "delayed_s": round(item.age_s(now), 1),
+                },
+            )
+            sent.append(late)
+        return sent
+
+    def _record_attempt(
+        self,
+        item: PendingNotification,
+        now: datetime,
+        *,
+        delivered: bool,
+        error: str | None,
+        notification: Notification | None = None,
+    ) -> None:
+        """Write the terminal outcome of a queued notification.
+
+        Only the first failure and the final outcome are recorded. The attempts in
+        between are in the log, not the database -- a long outage should not write a row
+        every thirty seconds for an alert nobody has seen yet.
+        """
+        n = notification or item.notification
+        self._history.record_notification(
+            node_id=item.node_id,
+            kind=n.kind,
+            state=n.state,
+            ts=now,
+            priority=n.priority,
+            title=n.title,
+            message=n.message,
+            escalation=n.escalation,
+            delivered=delivered,
+            error=error,
+            attempt=item.attempts,
+        )
+
+    def _enqueue(
+        self,
+        notification: Notification,
+        tracker: NodeTracker,
+        now: datetime,
+        mark_state: str | None,
+    ) -> None:
+        """Hold a failed notification for another attempt on a later tick."""
+        retry = self._config.retry
+        if not retry.enabled:
+            return
+        node_id = notification.node_id or tracker.node_id
+        # Collapse repeats. A light flapping error -> clear -> error through an outage
+        # would otherwise queue an alert per transition and deliver the lot in a burst
+        # the moment the network came back. One alert per node, kind and state says the
+        # same thing without the pile-up. The first attempt time is carried over, so
+        # repeating does not let a notification outlive max_age_s.
+        duplicate = next(
+            (
+                item
+                for item in self._pending
+                if item.node_id == node_id
+                and item.notification.kind == notification.kind
+                and item.notification.state == notification.state
+                and item.notification.escalation == notification.escalation
+            ),
+            None,
+        )
+        if duplicate is not None:
+            duplicate.notification = notification
+            duplicate.mark_state = mark_state
+            return
+        self._pending.append(
+            PendingNotification(
+                notification=notification,
+                node_id=node_id,
+                first_attempt=now,
+                last_attempt=now,
+                mark_state=mark_state,
+            )
+        )
+        # Oldest first: during a long outage the newest alerts describe the machine as
+        # it is now, so those are the ones worth keeping.
+        while len(self._pending) > retry.max_pending:
+            dropped = self._pending.pop(0)
+            log.warning(
+                "notification dropped, retry queue full",
+                extra={
+                    "node_id": dropped.node_id,
+                    "title": dropped.notification.title,
+                    "max_pending": retry.max_pending,
+                },
+            )
 
     # -- time-based rules ----------------------------------------------------------
 
@@ -330,7 +542,12 @@ class RulesEngine:
 
         A delivery failure is recorded rather than raised: the engine's job is to keep
         processing, and a notification that could not be sent is exactly the kind of
-        thing you want to find in the history afterwards.
+        thing you want to find in the history afterwards. It is also queued for another
+        attempt -- see :meth:`_retry_pending`, because for a latching light this is the
+        only attempt that will ever be triggered by the machine itself.
+
+        The cooldown is claimed only on success, so a failure does not silence the next
+        one. ``RetryConfig`` is what stops that turning into a tight loop.
         """
         error: str | None = None
         try:
@@ -343,8 +560,10 @@ class RulesEngine:
                     "node_id": notification.node_id,
                     "title": notification.title,
                     "error": error,
+                    "queued": self._config.retry.enabled,
                 },
             )
+            self._enqueue(notification, tracker, now, mark_state)
 
         if error is None and mark_state is not None:
             tracker.last_notified[mark_state] = now
