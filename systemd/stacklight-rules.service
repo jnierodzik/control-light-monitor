@@ -13,6 +13,9 @@ Documentation=https://github.com/jnierodzik/control-light-monitor
 # and keeps retrying, which is more useful than refusing to start.
 After=network-online.target mosquitto.service
 Wants=network-online.target mosquitto.service
+# Never give up restarting: this is the process that tells you the machine needs you.
+# systemd only reads this in [Unit] -- in [Service] it is silently ignored.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -24,7 +27,6 @@ Environment=PYTHONUNBUFFERED=1
 # The thing that tells you the machine needs you must come back on its own.
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
 
 KillSignal=SIGTERM
 TimeoutStopSec=20

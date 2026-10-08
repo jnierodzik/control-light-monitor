@@ -14,6 +14,10 @@ Documentation=https://github.com/jnierodzik/control-light-monitor
 # requirement: it will sit there sampling the light and retrying.
 After=network-online.target
 Wants=network-online.target
+# Do not give up after repeated failures: a camera that is unplugged and replugged, or a
+# transient libcamera fault, must not permanently disable the unit. systemd only reads
+# this in [Unit] -- in [Service] it is silently ignored and the default limit applies.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -31,9 +35,6 @@ Environment=PYTHONUNBUFFERED=1
 # A monitor that stays down is worse than no monitor.
 Restart=always
 RestartSec=5
-# Do not give up after repeated failures: a camera that is unplugged and replugged, or a
-# transient libcamera fault, must not permanently disable the unit.
-StartLimitIntervalSec=0
 
 # SIGTERM makes the node flip availability to offline and release the camera before it
 # exits. Give it time to finish the frame in hand.
