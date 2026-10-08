@@ -60,8 +60,11 @@ fmt:
 calibrate:
 	@echo "The calibration UI is not built yet." && exit 1
 
-# Deployment. Override the target on the command line:
-#   make deploy PI=stacklight.local PI_USER=jesse NODE=machine1
+# Deployment. Runs on your workstation and pushes to the Pi over ssh -- there is no
+# Makefile on the Pi, so running this there just says "No rule to make target".
+# The defaults below are the live machine tap, so plain `make deploy` is usually right.
+# Override only to target a different Pi or config:
+#   make deploy PI=other-pi.local PI_USER=someone NODE=other-node
 PI      ?= stacklight.local
 PI_USER ?= jnierodzik
 # The config basename under config/, which is also the systemd instance name:
