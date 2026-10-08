@@ -94,7 +94,7 @@ class RulesEngine:
             return []
 
         previous = tracker.state
-        self._history.record_transition(payload, previous)
+        self._history.record_transition(node_id, payload, previous)
         tracker.state = state
         tracker.state_since = now
         tracker.escalations = 0

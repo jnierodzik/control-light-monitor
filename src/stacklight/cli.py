@@ -338,6 +338,91 @@ def _cmd_node(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_rules(args: argparse.Namespace) -> int:
+    """Run the rules engine: subscribe to node state, notify, log history."""
+    import signal
+
+    from .rules.config import load_rules_config
+    from .rules.engine import RulesEngine
+    from .rules.notify import NtfyNotifier, RecordingNotifier
+    from .rules.service import RulesService
+    from .rules.store import History
+
+    config = load_rules_config(args.config)
+    configure_logging(args.log_level or config.logging.level, config.logging.format)
+    log = logging.getLogger("stacklight.rules")
+
+    notifier = RecordingNotifier() if args.dry_run else NtfyNotifier(config.ntfy)
+    if args.dry_run:
+        print(f"dry run: nothing will be sent to {config.ntfy.server}/{config.ntfy.topic}")
+
+    with History(config.database) as history:
+        engine = RulesEngine(config, notifier, history)
+        service = RulesService(config, engine)
+
+        def handle_signal(signum: int, _frame: object) -> None:
+            log.info("shutting down", extra={"signal": signal.Signals(signum).name})
+            service.stop()
+
+        signal.signal(signal.SIGINT, handle_signal)
+        signal.signal(signal.SIGTERM, handle_signal)
+
+        if not service.connect(args.connect_timeout):
+            # Not fatal: the broker may come up later, and a rules process that keeps
+            # retrying is more useful than one that exits.
+            log.warning(
+                "broker not reachable yet, continuing and retrying in the background",
+                extra={"host": config.mqtt.host, "port": config.mqtt.port},
+            )
+        try:
+            service.run(max_seconds=args.seconds)
+        finally:
+            service.disconnect()
+
+    if isinstance(notifier, RecordingNotifier):
+        print(f"\ndry run would have sent {len(notifier.sent)} notification(s):")
+        for sent in notifier.sent:
+            print(f"  [{sent.priority:<7}] {sent.title} -- {sent.message}")
+    return 0
+
+
+def _cmd_history(args: argparse.Namespace) -> int:
+    """Summarise the event log: how often each state, and how long it was left."""
+    from .rules.config import load_rules_config
+    from .rules.store import History
+
+    config = load_rules_config(args.config)
+    with History(config.database) as history:
+        rows = history.transitions(args.node, limit=args.limit)
+        if not rows:
+            print(f"no transitions recorded in {config.database}")
+            return 0
+
+        nodes = sorted({row["node_id"] for row in rows})
+        for node in nodes:
+            counts = history.count_states(node)
+            print(f"{node}:")
+            for state, count in counts.items():
+                dwells = history.dwell_times(node, state)
+                if dwells:
+                    mean = sum(dwells) / len(dwells)
+                    print(
+                        f"  {state:<10} {count:>5}x   mean dwell {mean / 60:6.1f} min"
+                        f"   longest {max(dwells) / 60:6.1f} min"
+                    )
+                else:
+                    print(f"  {state:<10} {count:>5}x")
+            print()
+
+        print(f"last {min(len(rows), args.limit)} transitions, newest first:")
+        for row in rows:
+            print(
+                f"  {row['ts']:<22} {row['node_id']:<10} "
+                f"{row['previous'] or '-'!s:<9} -> {row['state']}"
+            )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="stacklight", description=__doc__)
     parser.add_argument("--version", action="version", version=f"stacklight {__version__}")
@@ -410,6 +495,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_node.add_argument("--seconds", type=float, default=None, help="stop after N seconds")
     p_node.add_argument("--connect-timeout", type=float, default=5.0)
     p_node.set_defaults(func=_cmd_node)
+
+    p_rules = sub.add_parser("rules", help="run the rules engine: notify and log history")
+    p_rules.add_argument("config", help="path to the rules YAML config")
+    p_rules.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="evaluate rules and record what would be sent, without notifying",
+    )
+    p_rules.add_argument("--seconds", type=float, default=None, help="stop after N seconds")
+    p_rules.add_argument("--connect-timeout", type=float, default=10.0)
+    p_rules.set_defaults(func=_cmd_rules)
+
+    p_history = sub.add_parser("history", help="summarise the recorded event log")
+    p_history.add_argument("config", help="path to the rules YAML config")
+    p_history.add_argument("--node", default=None, help="limit to one node id")
+    p_history.add_argument("--limit", type=int, default=20)
+    p_history.set_defaults(func=_cmd_history)
     return parser
 
 
@@ -426,6 +528,11 @@ def main(argv: list[str] | None = None) -> int:
 def node_main(argv: list[str] | None = None) -> int:
     """Entry point for the ``stacklight-node`` console script and the systemd unit."""
     return main(["node", *(argv if argv is not None else sys.argv[1:])])
+
+
+def rules_main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``stacklight-rules`` console script and the systemd unit."""
+    return main(["rules", *(argv if argv is not None else sys.argv[1:])])
 
 
 if __name__ == "__main__":

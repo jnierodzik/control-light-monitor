@@ -93,14 +93,21 @@ class History:
 
     # -- writing ------------------------------------------------------------------
 
-    def record_transition(self, payload: Mapping[str, Any], previous: str | None) -> int:
-        """Log one committed state change, straight from the MQTT payload."""
+    def record_transition(
+        self, node_id: str, payload: Mapping[str, Any], previous: str | None
+    ) -> int:
+        """Log one committed state change.
+
+        ``node_id`` comes from the topic rather than the payload. The topic is the
+        broker's namespace and is what the engine routes on, so letting the payload
+        disagree would quietly split a node's history in two.
+        """
         cursor = self._conn.execute(
             "INSERT INTO transitions"
             " (node_id, state, previous, since, ts, confidence, reasons, segments, seq)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                payload.get("node_id", "?"),
+                node_id,
                 payload.get("state", "unknown"),
                 previous,
                 payload.get("since", ""),

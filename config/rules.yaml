@@ -1,0 +1,77 @@
+# Rules engine for the machine. Subscribes to node state, decides what is worth a
+# notification, and logs every transition for later analysis.
+#
+# Runs as its own process, deliberately separate from the node: a node's job is to say
+# what the light is doing, and deciding whether that deserves waking someone up is a
+# different concern with different reasons to change.
+
+mqtt:
+  host: localhost
+  port: 1883
+  base_topic: shop/lights        # subscribes to shop/lights/+/{state,health,availability}
+
+ntfy:
+  server: https://ntfy.sh
+  topic: CHANGEME-pick-a-long-random-topic
+  # ntfy.sh has no accounts. This topic name is the only thing stopping a stranger
+  # reading these notifications or sending convincing fake ones. Treat it as a password:
+  # do not paste it into a public issue, screenshot or commit message other than this.
+
+database: ../data/history.sqlite
+
+# The machine's light is an annunciator: it only lights to ask for attention, and latches
+# until the operator acts. So `clear` is the normal condition and is not worth saying.
+rules:
+  - state: error
+    title: "Machine fault"
+    message: "Red light is on. The press has stopped and needs you."
+    priority: high
+    tags: [rotating_light]
+    cooldown_s: 120           # one notification per fault, not one per flicker
+    escalate_after_s: 900     # still unattended after 15 min -> escalate
+    escalate_priority: urgent
+    escalate_max: 4           # four reminders, then stop nagging
+
+  - state: done
+    title: "Machine run complete"
+    message: "Green light. The run finished and the press is waiting."
+    priority: default
+    tags: [white_check_mark]
+    cooldown_s: 60
+
+  - state: unknown
+    title: "Machine light unreadable"
+    message: "The node cannot interpret the light. Check the tap."
+    priority: default
+    tags: [grey_question]
+    cooldown_s: 3600
+
+  # `clear` fires after every single event. Announcing it would double the noise for no
+  # information, so it is logged to history and nothing more.
+  - state: clear
+    notify: false
+
+quiet_hours:
+  enabled: false              # turn on once you know the rhythm of the shop
+  start: "22:00"
+  end: "06:00"
+  override_states: [error]    # a fault at 3am is still a fault
+
+watchdog:
+  enabled: true
+  heartbeat_timeout_s: 60     # the node heartbeats every 15s
+  priority: high
+  repeat_s: 1800              # keep saying it every 30 min, not once and forget
+
+# The tap cannot distinguish an unplugged harness from an idle machine -- both are
+# "every input dark, forever". This is the only signal we have that it might be deaf
+# rather than merely quiet. Enable once you know what a normal working day looks like.
+staleness:
+  enabled: false
+  after_hours: 10
+  between: ["07:00", "19:00"]
+  priority: default
+
+logging:
+  level: INFO
+  format: text
