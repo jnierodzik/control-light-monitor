@@ -78,6 +78,37 @@ This map was verified by behaviour long before it was written down — energisin
 at a time and watching which segment reported. Recorded here because "it works" is not
 something the next person can check against.
 
+### Harness map, measured at the press
+
+The harness's four Wagos, labelled W1-W4, carry one signal each. Determined 2026-10-09
+on the press itself, with a meter: common probe on W1, and a run started so one lamp was
+held lit for each reading.
+
+| Wago | Signal | Reading, green lit | Reading, red lit | Sense wire | Terminal |
+| --- | --- | --- | --- | --- | --- |
+| W1 | Gray, common | (probe reference) | (probe reference) | black | `-` hub |
+| W2 | Red lamp | 0.0 | **+21.6** | red | `1+` |
+| W3 | Green lamp | **+21.6** | 0.0 | green | `2+` |
+| W4 | Purple, buzzer | 0.0 | 0.0 | blue | `3+` |
+
+W4 is by elimination; the buzzer was not triggered separately.
+
+**This contradicts the pin table above**, which has the box diagram's pin 2 as green and
+pin 3 as red. The measurement is the authority: either that diagram does not describe
+this unit's harness order, or the Wago labels do not run in connector-pin order. It does
+not matter which, because nothing downstream depends on pin numbers -- only on which
+Wago feeds which channel, and that is now measured rather than inferred.
+
+Two results worth keeping from the same session:
+
+- **The positive sign confirmed W1 is the common.** Had the red conductor been a lamp
+  leg instead, every channel would have seen reverse voltage at its input. That was the
+  one mistake in this build capable of damaging the board, and a single reading ruled
+  it out before anything was connected.
+- **The rail reads 21.6V, not 24.** Well above the optocoupler's trigger threshold, so
+  it changes nothing, but it is the number to compare against if a channel ever starts
+  reading intermittently.
+
 ### Sense wire colours
 
 The four wires from the harness Wagos to the optocoupler inputs are cut from 22 AWG
