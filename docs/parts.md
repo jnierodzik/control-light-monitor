@@ -80,34 +80,38 @@ something the next person can check against.
 
 ### Harness map, measured at the press
 
-The harness's four Wagos, labelled W1-W4, carry one signal each. Determined 2026-10-09
-on the press itself, with a meter: common probe on W1, and a run started so one lamp was
-held lit for each reading.
+Confirmed 2026-10-09. The Wago labels W1-W4 run in the same order as the connector read
+right to left:
 
-| Wago | Signal | Reading, green lit | Reading, red lit | Sense wire | Terminal |
-| --- | --- | --- | --- | --- | --- |
-| W1 | Gray, common | (probe reference) | (probe reference) | black | `-` hub |
-| W2 | Red lamp | 0.0 | **+21.6** | red | `1+` |
-| W3 | Green lamp | **+21.6** | 0.0 | green | `2+` |
-| W4 | Purple, buzzer | 0.0 | 0.0 | blue | `3+` |
+| Wago | Signal | Sense wire | Terminal |
+| --- | --- | --- | --- |
+| W1 | **Purple, buzzer** | none | — |
+| W2 | Red lamp | red | `1+` |
+| W3 | Green lamp | green | `2+` |
+| W4 | **Gray, common** | black | `-` hub |
 
-W4 is by elimination; the buzzer was not triggered separately.
+Purple is left untapped. This machine never drives it -- the clicking at completion is a
+flasher relay in the controller, not the buzzer -- so the channel carries no information,
+and `buzzer` is named in no state.
 
-**This contradicts the pin table above**, which has the box diagram's pin 2 as green and
-pin 3 as red. The measurement is the authority: either that diagram does not describe
-this unit's harness order, or the Wago labels do not run in connector-pin order. It does
-not matter which, because nothing downstream depends on pin numbers -- only on which
-Wago feeds which channel, and that is now measured rather than inferred.
+**An earlier version of this table had W1 as the common and W4 as the buzzer, and it was
+wrong.** It was derived from voltage readings taken with the probe referenced to W1, and
+those readings are consistent with *either* assignment: with the buzzer unenergised,
+purple sits at essentially gray potential, so measuring from purple looks exactly like
+measuring from the common. Every number was correct and the conclusion still did not
+follow.
 
-Two results worth keeping from the same session:
+What it cost: wired that way, the tap's return current left the green channel, went out
+through purple, and reached gray only by passing through the buzzer. About 10mA -- too
+little to trigger the optocoupler, so the buzzer channel read 0.0 the whole time, and
+enough to sound the buzzer whenever green was lit. A machine that beeped continuously
+through every run, with the instrument insisting nothing was happening.
 
-- **The positive sign confirmed W1 is the common.** Had the red conductor been a lamp
-  leg instead, every channel would have seen reverse voltage at its input. That was the
-  one mistake in this build capable of damaging the board, and a single reading ruled
-  it out before anything was connected.
-- **The rail reads 21.6V, not 24.** Well above the optocoupler's trigger threshold, so
-  it changes nothing, but it is the number to compare against if a channel ever starts
-  reading intermittently.
+What actually settled it was not a measurement but a substitution: move the common to the
+other candidate and see whether the beeping stops. Two configurations, one audible
+difference. A diode-mode continuity test was tried first and was useless -- a 24V lamp
+module is a series string with its own driver, so the meter's 2V test reads OL on every
+pair regardless of how the thing is wired.
 
 ### Sense wire colours
 
