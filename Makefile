@@ -4,7 +4,7 @@
 CONFIG ?= config/dev-synthetic.yaml
 UV     ?= uv
 
-.PHONY: help setup dev dry-run node rules test lint fmt calibrate stage install-cmd bootstrap deploy logs restart probe clean
+.PHONY: help setup dev dry-run node rules test lint fmt calibrate stage install-cmd bootstrap deploy logs restart shutdown probe clean
 
 help:
 	@echo "setup      install the dev environment (uv, Python 3.11)"
@@ -141,6 +141,17 @@ deploy:
 	@echo "Then:  make logs PI=$(PI) PI_USER=$(PI_USER) NODE=$(NODE)"
 
 # Follow the node's log on the Pi.
+# Always use this rather than pulling the plug. An unclean power-off leaves the
+# filesystem dirty, and enough of them corrupt the card -- which is how this unit lost
+# an OS and needed reflashing. Wait for the LED to go dark before removing power.
+#
+# The Pi 5 also has a physical power button beside the USB-C socket: one press asks for
+# the same clean shutdown, which is the one to use when you are standing at the machine.
+shutdown:
+	$(SSH) -t $(REMOTE) 'sudo systemctl poweroff' || true
+	@echo
+	@echo "Shutdown requested. Wait for the LED to go dark, then it is safe to unplug."
+
 logs:
 	$(SSH) $(REMOTE) 'journalctl -u stacklight-node@$(NODE) -f -n 50'
 

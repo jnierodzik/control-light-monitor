@@ -48,11 +48,21 @@ rules:
 
   # `clear` fires after every single event. Announcing it would double the noise for no
   # information, so it is logged to history and nothing more.
-  # The press starting a run is not news. Recorded in history for dwell times and run
-  # durations, but never pushed -- an alert every time the operator pulls the handle is
-  # how a notification channel gets muted, and a muted channel misses the fault.
+  # Deliberately noisy, and it earns it. Every run is started by hand, so an alert
+  # here is the operator confirming the whole chain is alive at the moment they would
+  # most notice its absence: lamp, tap, optocoupler, Pi, broker, rules, network, phone.
+  # Expecting a buzz and not getting one is a liveness check nothing else provides --
+  # the heartbeat watchdog lives on the same Pi as the node it watches, so it cannot
+  # report that Pi being dead. This can, via the person standing at the machine.
+  #
+  # cooldown_s is 0 on purpose: back-to-back runs should each announce themselves, or
+  # the check silently stops working exactly when the press is busiest.
   - state: running
-    notify: false
+    title: "Machine running"
+    message: "Green light steady. Run started, monitor is alive."
+    priority: default
+    tags: [arrow_forward]
+    cooldown_s: 0
   - state: clear
     notify: false
 
