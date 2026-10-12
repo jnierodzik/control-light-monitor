@@ -26,7 +26,7 @@ def service(tmp_path):
     config = parse_rules_config(
         {
             "mqtt": {"base_topic": BASE},
-            "ntfy": {"topic": "CHANGEME-pick-a-long-random-topic"},
+            "ntfy": {"topic": "example-topic-not-a-real-one"},
             "rules": [
                 {"state": "error", "title": "Machine fault", "priority": "high"},
                 {"state": "done", "title": "Run complete"},

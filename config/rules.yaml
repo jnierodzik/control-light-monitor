@@ -12,6 +12,10 @@ mqtt:
 
 ntfy:
   server: https://ntfy.sh
+  # ntfy.sh has no accounts, so this topic name IS the only secret: anyone who knows
+  # it can read every notification from this shop and publish convincing fakes. It is
+  # deliberately a placeholder here. Put the real one in config/rules-pi.local.yaml,
+  # which is gitignored and is what `make deploy` sends to the Pi.
   topic: CHANGEME-pick-a-long-random-topic
   # ntfy.sh has no accounts. This topic name is the only thing stopping a stranger
   # reading these notifications or sending convincing fake ones. Treat it as a password:

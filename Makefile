@@ -129,7 +129,11 @@ deploy:
 	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' --exclude '__pycache__' 		--exclude 'samples' --exclude '.pytest_cache' --exclude '.ruff_cache' --exclude 'hardware' 		./ $(REMOTE):/opt/stacklight/
 	$(SSH) $(REMOTE) '/opt/stacklight/.venv/bin/pip install -q -e /opt/stacklight'
 	$(SCP) config/$(NODE).yaml $(REMOTE):/etc/stacklight/$(NODE).yaml
-	$(SCP) config/rules-pi.yaml $(REMOTE):/etc/stacklight/rules.yaml
+	@# The committed rules config carries a placeholder topic, because on ntfy.sh the
+	@# topic name is the only secret there is. The real one lives in the gitignored
+	@# local override, and that is what actually gets deployed when it exists.
+	$(SCP) $$([ -f config/rules-pi.local.yaml ] && echo config/rules-pi.local.yaml || echo config/rules-pi.yaml) \
+		$(REMOTE):/etc/stacklight/rules.yaml
 	$(SSH) $(REMOTE) '/opt/stacklight/.venv/bin/stacklight validate /etc/stacklight/$(NODE).yaml'
 	@echo
 	@echo "Code and configs are in place. Finish on the Pi (needs your password):"
