@@ -24,7 +24,7 @@ database: ../data/history.sqlite
 rules:
   - state: error
     title: "Machine fault"
-    message: "Red light is on. The press has stopped and needs you."
+    message: "Red light is on. The system has stopped and needs you."
     priority: high
     tags: [rotating_light]
     cooldown_s: 120           # one notification per fault, not one per flicker
@@ -34,7 +34,7 @@ rules:
 
   - state: done
     title: "Machine run complete"
-    message: "Green light. The run finished and the press is waiting."
+    message: "Green light. The run finished and the system is waiting."
     priority: default
     tags: [white_check_mark]
     cooldown_s: 60
