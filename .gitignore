@@ -14,8 +14,13 @@ data/
 *.sqlite3
 .DS_Store
 
-# rendered from hardware/*.scad
+# Rendered from the .scad, so normally build output rather than source.
 *.stl
+# The exception: the enclosure in use. Not everyone printing this wants to install
+# OpenSCAD first, and 3MB is a cheap price for a case you can send straight to a
+# slicer. The .scad beside them is still the source -- if it changes, these have to be
+# re-rendered or they go quietly stale.
+!hardware/enclosure/*.stl
 
 # Holds the real ntfy topic. On ntfy.sh the topic name is the only secret there is,
 # so it stays out of git; the committed configs carry a placeholder.

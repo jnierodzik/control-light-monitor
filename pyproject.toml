@@ -47,6 +47,3 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "T20", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 # The CLI is the one place that is allowed to write to stdout.
 "src/stacklight/cli.py" = ["T20"]
-# The enclosure generator is a standalone script, not library code: reporting each STL's
-# dimensions and whether it passed the manifold and post checks is its whole interface.
-"hardware/enclosure.py" = ["T20"]

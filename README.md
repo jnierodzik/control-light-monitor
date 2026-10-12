@@ -510,5 +510,7 @@ src/stacklight/
     synthetic.py     programmatic frames, scriptable
     file.py          image directory / image / video replay
 config/              per-node YAML
+hardware/enclosure/  printed case: OpenSCAD source plus rendered STLs
+docs/                design notes, parts list, Pi setup
 tests/
 ```
