@@ -155,8 +155,13 @@ shutdown:
 logs:
 	$(SSH) $(REMOTE) 'journalctl -u stacklight-node@$(NODE) -f -n 50'
 
+# Both services, because a config change usually touches both and restarting only the
+# node leaves the rules engine running the previous rules -- with no sign that it is.
+# ssh -t so sudo can prompt; without a tty it fails and prints nothing useful.
 restart:
-	$(SSH) $(REMOTE) 'sudo systemctl restart stacklight-node@$(NODE)'
+	$(SSH) -t $(REMOTE) 'sudo systemctl restart stacklight-node@$(NODE) stacklight-rules'
+	@sleep 2
+	@$(SSH) $(REMOTE) 'systemctl is-active stacklight-node@$(NODE) stacklight-rules | tr "\n" " "; echo'
 
 # Capture a locked, underexposed frame straight from the camera and bring it back, to
 # check aim and exposure without any of this project's code involved.
