@@ -96,9 +96,18 @@ stage:
 
 # One-time setup on a fresh Pi: system packages, directories, and the venv that can see
 # apt's picamera2.
+# Everything a freshly flashed Pi needs before `make deploy` will work. Uses ssh -t so
+# sudo can prompt for your password -- without a tty it fails with no useful message.
+#
+# picamera2 is deliberately absent: it is a large install and only a camera node needs
+# it. For one of those, add it by hand. A GPIO node needs gpiozero and lgpio instead,
+# and from apt rather than pip, because RPi.GPIO does not work on the Pi 5's RP1.
 bootstrap:
-	$(SSH) $(REMOTE) 'sudo apt update && sudo apt install -y python3-picamera2 python3-venv rsync'
-	$(SSH) $(REMOTE) 'sudo mkdir -p /opt/stacklight /etc/stacklight && sudo chown -R $(PI_USER) /opt/stacklight /etc/stacklight'
+	$(SSH) -t $(REMOTE) 'sudo apt update && sudo apt install -y \
+		mosquitto mosquitto-clients python3-gpiozero python3-lgpio python3-venv rsync'
+	$(SSH) -t $(REMOTE) 'sudo systemctl enable --now mosquitto'
+	$(SSH) -t $(REMOTE) 'sudo mkdir -p /opt/stacklight /etc/stacklight /var/lib/stacklight && \
+		sudo chown -R $(PI_USER) /opt/stacklight /etc/stacklight /var/lib/stacklight'
 	$(SSH) $(REMOTE) 'cd /opt/stacklight && python3 -m venv --system-site-packages .venv'
 	@echo
 	@echo "Now: make deploy PI=$(PI) PI_USER=$(PI_USER) NODE=$(NODE)"
