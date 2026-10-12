@@ -37,6 +37,11 @@ rules:
     tags: [grey_question]
     cooldown_s: 3600
 
+  # The press starting a run is not news. Recorded in history for dwell times and run
+  # durations, but never pushed -- an alert every time the operator pulls the handle is
+  # how a notification channel gets muted, and a muted channel misses the fault.
+  - state: running
+    notify: false
   - state: clear
     notify: false
 

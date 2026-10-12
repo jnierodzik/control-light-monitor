@@ -52,18 +52,38 @@ def test_the_shipped_tap_config_is_valid():
     config = load_config(CONFIG_DIR / "machine1.yaml")
     assert config.sensor == "gpio"
     assert config.camera is None
-    assert config.segment_names == ("red", "green", "buzzer")
+    # Purple is not tapped: W1 is left empty at the harness. A segment on an
+    # unconnected pin would report `off` forever, which reads as "the buzzer is
+    # silent" rather than "nothing is watching it".
+    assert config.segment_names == ("red", "green")
 
 
-def test_the_buzzer_is_tapped_but_inert_in_state_resolution():
-    """Published for observation, but no state names it, so it cannot change a verdict
-    until its meaning is known."""
+def test_steady_green_is_running_and_flashing_green_is_done():
+    """The distinction the whole tap exists to make, and the one it originally got
+    backwards.
+
+    Both green modes used to match `green: "on"` and resolve to `done`. That fired a
+    completion alert the moment a cycle STARTED, and then produced no transition at all
+    when the cycle actually finished -- a false alert at the start and silence at the
+    end. Observed on the real press: steady green means a run is in progress, flashing
+    green means it has finished and is waiting to be dismissed.
+    """
     from stacklight.types import SegmentMode as M
 
     config = load_config(CONFIG_DIR / "machine1.yaml")
-    for buzzer in M:
-        assert config.resolve_state({"red": M.OFF, "green": M.OFF, "buzzer": buzzer}) == "clear"
-        assert config.resolve_state({"red": M.STEADY, "green": M.OFF, "buzzer": buzzer}) == "error"
+    assert config.resolve_state({"red": M.OFF, "green": M.STEADY}) == "running"
+    assert config.resolve_state({"red": M.OFF, "green": M.FLASHING}) == "done"
+    assert config.resolve_state({"red": M.OFF, "green": M.OFF}) == "clear"
+
+
+def test_a_fault_outranks_whatever_green_is_doing():
+    """Red latches until the operator acts, so it must win from any green state."""
+    from stacklight.types import SegmentMode as M
+
+    config = load_config(CONFIG_DIR / "machine1.yaml")
+    for red in (M.STEADY, M.FLASHING):
+        for green in M:
+            assert config.resolve_state({"red": red, "green": green}) == "error"
 
 
 def test_a_gpio_segment_without_a_pin_is_rejected():

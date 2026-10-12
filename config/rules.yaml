@@ -48,6 +48,11 @@ rules:
 
   # `clear` fires after every single event. Announcing it would double the noise for no
   # information, so it is logged to history and nothing more.
+  # The press starting a run is not news. Recorded in history for dwell times and run
+  # durations, but never pushed -- an alert every time the operator pulls the handle is
+  # how a notification channel gets muted, and a muted channel misses the fault.
+  - state: running
+    notify: false
   - state: clear
     notify: false
 
