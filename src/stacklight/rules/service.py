@@ -66,6 +66,18 @@ class RulesService:
 
     def handle(self, topic: str, payload: bytes) -> list[Notification]:
         """Dispatch one message. Public so tests can drive the service without a broker."""
+        if self._stopping.is_set():
+            # We are on our way out, so we are in no position to report that anything
+            # else has stopped. This is not hypothetical: systemd restarts both units
+            # together, the node publishes `offline` as it exits, and this process --
+            # still draining its queue after its own SIGTERM -- would send a watchdog
+            # alert one second before stopping too. A planned restart should be quiet.
+            #
+            # A node that dies on its own is unaffected: this process keeps running,
+            # never sets the flag, and reports the outage as it should.
+            log.debug("ignoring message during shutdown", extra={"topic": topic})
+            return []
+
         parsed = parse_topic(topic, self._config.mqtt.base_topic)
         if parsed is None:
             return []

@@ -184,3 +184,46 @@ def test_stop_ends_the_loop(service):
     svc, _, _ = service
     svc.stop()
     svc.run(max_seconds=60.0)  # returns immediately rather than looping for a minute
+
+
+# -- a planned restart should be quiet ---------------------------------------------
+
+
+def test_a_shutting_down_service_does_not_raise_the_watchdog(service):
+    """systemd restarts both units together. The node publishes `offline` as it exits,
+    and this process -- still draining its queue after its own SIGTERM -- used to send
+    a watchdog alert one second before stopping as well. Observed on the real unit:
+
+        22:11:55  rules: shutting down signal='SIGTERM'
+        22:11:56  rules: notification sent 'machine1: monitor offline'
+
+    A planned restart must not page anyone.
+    """
+    svc, notifier, _history = service
+    svc.handle(f"{BASE}/machine1/health", b'{"node_id": "machine1"}')
+    notifier.clear()
+
+    svc.stop()
+    assert svc.handle(f"{BASE}/machine1/availability", b'{"status": "offline"}') == []
+    assert notifier.sent == []
+
+
+def test_a_node_dying_on_its_own_still_raises_the_watchdog(service):
+    """The fix must not silence the case it exists for: this process keeps running, so
+    the flag is never set, and the outage is reported."""
+    svc, notifier, _history = service
+    svc.handle(f"{BASE}/machine1/health", b'{"node_id": "machine1"}')
+    notifier.clear()
+
+    svc.handle(f"{BASE}/machine1/availability", b'{"status": "offline"}')
+    assert [n.kind for n in notifier.sent] == ["watchdog"]
+
+
+def test_state_messages_are_dropped_during_shutdown_too(service):
+    """Not just the watchdog -- a process on its way out should not be deciding
+    anything, because it cannot see what happens next."""
+    svc, notifier, history = service
+    svc.stop()
+    assert svc.handle(f"{BASE}/machine1/state", state_message("error")) == []
+    assert notifier.sent == []
+    assert history.transitions() == []
