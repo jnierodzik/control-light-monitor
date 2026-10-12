@@ -284,6 +284,32 @@ Note for later: because the lamp current does *not* flow through our electronics
 controller still drives the lamp lead whether or not a lamp is attached. The tap would
 therefore report an error correctly even with the light itself removed.
 
+## Verified in production
+
+2026-10-11, on the machine itself, through the pass-through harness:
+
+```
+21:53:28  clear   -> running    green steady      no notification, by design
+21:54:17  running -> done       green flashing    "Machine run complete" delivered
+```
+
+Delivered on the first attempt. The buzzer stayed silent throughout, confirming the
+corrected harness map. Run duration falls out of the transition log for free: 49s.
+
+What each piece of the chain proved in that one cycle:
+
+- The parallel tap reads the controller's green output without disturbing it.
+- The optocouplers isolate correctly under real machine load.
+- `steady` and `flashing` are distinguished reliably on a live signal -- measured 0.50
+  duty, 4 transitions in the 2s window, no detector tuning required.
+- Debounce, state resolution, MQTT publish, rule evaluation and push delivery all work
+  end to end on hardware, in about a second.
+
+Not yet exercised on the real press: the `error` path. Red has only ever been tested
+with a bench supply. It resolves from the same two-segment table and shares the whole
+downstream chain, so the risk is low, but it is untested and should not be described
+otherwise until a genuine fault occurs.
+
 ## Undelivered notifications
 
 The annunciator behaviour that shapes the detector also shapes delivery, and it took
