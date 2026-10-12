@@ -91,7 +91,7 @@ Ribbon cables are not hot-pluggable. Do this before the Pi is ever powered.
 2. On the Pi, use either **CAM/DISP 0** or **CAM/DISP 1**. Both work and the OS
    auto-detects; just note which one you used.
 3. Lift the connector's small plastic latch straight up, slide the cable fully in, and
-   press the latch back down. It should feel firmly seated, not springy.
+   system the latch back down. It should feel firmly seated, not springy.
 4. Same at the camera end.
 
 **Contact orientation matters and is easy to get backwards.** Follow the photos in the
@@ -349,7 +349,7 @@ without which libcamera finds no camera at all.
 ## 5a. Enclosure
 
 The Pi has to live within 500mm of the light, because that is the cable length — which
-puts it in the working area of a press that throws powder residue, primer dust and brass
+puts it in the working area of a system that throws powder residue, primer dust and brass
 shavings. **Brass shavings are conductive**, and a bare board with exposed GPIO pins in
 that environment will eventually produce an intermittent fault that looks exactly like a
 camera problem. Bench work bare is fine; permanent mounting is not.
@@ -418,7 +418,7 @@ breakaway tab specifically for the camera ribbon. It also has a camera mount on 
 which is not useful here — the camera goes on the arm at the light — but the tab is the
 feature. It has no wall-mount wings, so mounting is on you.
 
-Both are CC BY-NC-SA. Non-commercial: worth a thought if this press is earning money
+Both are CC BY-NC-SA. Non-commercial: worth a thought if this system is earning money
 rather than serving a hobby.
 
 ---

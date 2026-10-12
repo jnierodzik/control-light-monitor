@@ -149,7 +149,7 @@ deploy:
 # filesystem dirty, and enough of them corrupt the card -- which is how this unit lost
 # an OS and needed reflashing. Wait for the LED to go dark before removing power.
 #
-# The Pi 5 also has a physical power button beside the USB-C socket: one press asks for
+# The Pi 5 also has a physical power button beside the USB-C socket: one system asks for
 # the same clean shutdown, which is the one to use when you are standing at the machine.
 shutdown:
 	$(SSH) -t $(REMOTE) 'sudo systemctl poweroff' || true

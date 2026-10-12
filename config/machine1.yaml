@@ -47,7 +47,7 @@ detection:
 # Observed on the machine, 2026-10-09. The light was previously documented as a pure
 # annunciator -- dark when off, idle and running alike. That was wrong about green:
 #
-#   green steady    the press is RUNNING. Lit the whole time a cycle is in progress.
+#   green steady    the system is RUNNING. Lit the whole time a cycle is in progress.
 #   green flashing  the cycle COMPLETED and is waiting to be dismissed. ~1Hz, 50% duty.
 #   red on          fault, latched until the operator acts.
 #   all dark        off, or idle between runs.

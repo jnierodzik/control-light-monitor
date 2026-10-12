@@ -63,7 +63,7 @@ def state_message(state: str) -> bytes:
         (f"{BASE}/machine1/state", ("machine1", "state")),
         (f"{BASE}/machine1/health", ("machine1", "health")),
         (f"{BASE}/machine1/availability", ("machine1", "availability")),
-        (f"{BASE}/press2/state", ("press2", "state")),
+        (f"{BASE}/system2/state", ("system2", "state")),
         (f"{BASE}/machine1/snapshot", None),  # not ours to act on
         (f"{BASE}/machine1", None),
         (f"{BASE}/machine1/state/extra", None),
@@ -79,11 +79,11 @@ def test_a_second_node_needs_no_central_change(service):
     """Adding another machine is a deployment change, not a code change."""
     svc, notifier, history = service
     svc.handle(f"{BASE}/machine1/state", state_message("error"))
-    svc.handle(f"{BASE}/press2/state", state_message("error"))
+    svc.handle(f"{BASE}/system2/state", state_message("error"))
     assert len(notifier.sent) == 2
-    assert {n.node_id for n in notifier.sent} == {"machine1", "press2"}
+    assert {n.node_id for n in notifier.sent} == {"machine1", "system2"}
     # Each node gets its own tracker and its own history, keyed off the topic.
-    assert {row["node_id"] for row in history.transitions()} == {"machine1", "press2"}
+    assert {row["node_id"] for row in history.transitions()} == {"machine1", "system2"}
 
 
 def test_history_is_keyed_on_the_topic_not_the_payload(service):
@@ -92,8 +92,8 @@ def test_history_is_keyed_on_the_topic_not_the_payload(service):
     The topic is the broker's namespace and is what the engine routes on, so it wins.
     """
     svc, _notifier, history = service
-    svc.handle(f"{BASE}/press2/state", state_message("error"))  # payload says machine1
-    assert [row["node_id"] for row in history.transitions()] == ["press2"]
+    svc.handle(f"{BASE}/system2/state", state_message("error"))  # payload says machine1
+    assert [row["node_id"] for row in history.transitions()] == ["system2"]
 
 
 # -- dispatch ----------------------------------------------------------------------

@@ -65,7 +65,7 @@ def test_steady_green_is_running_and_flashing_green_is_done():
     Both green modes used to match `green: "on"` and resolve to `done`. That fired a
     completion alert the moment a cycle STARTED, and then produced no transition at all
     when the cycle actually finished -- a false alert at the start and silence at the
-    end. Observed on the real press: steady green means a run is in progress, flashing
+    end. Observed on the real system: steady green means a run is in progress, flashing
     green means it has finished and is waiting to be dismissed.
     """
     from stacklight.types import SegmentMode as M

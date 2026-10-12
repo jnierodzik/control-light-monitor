@@ -264,7 +264,7 @@ def test_topics_are_all_namespaced_under_the_node_id(config):
 def test_a_second_node_shares_no_topics_with_the_first(config_dict):
     """Adding a camera is a deployment change: another config file, nothing central."""
     first = parse_config(dict(config_dict, node_id="machine1"))
-    second = parse_config(dict(config_dict, node_id="press2"))
+    second = parse_config(dict(config_dict, node_id="system2"))
     _, first_pub = run(first, [ScriptStep(6.0, {"green": STEADY})])
     _, second_pub = run(second, [ScriptStep(6.0, {"green": STEADY})])
     assert set(first_pub.topics()).isdisjoint(second_pub.topics())

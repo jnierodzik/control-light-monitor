@@ -113,9 +113,9 @@ def test_client_id_defaults_to_the_node_id(config, fake_paho):
 def test_an_explicit_client_id_is_honoured(config_dict, fake_paho):
     from stacklight.config import parse_config
 
-    config_dict["mqtt"] = {"client_id": "press-cam-1"}
+    config_dict["mqtt"] = {"client_id": "system-cam-1"}
     _, client = build(parse_config(config_dict))
-    assert client.kwargs["client_id"] == "press-cam-1"
+    assert client.kwargs["client_id"] == "system-cam-1"
 
 
 def test_the_last_will_is_registered_before_connecting(config, fake_paho):

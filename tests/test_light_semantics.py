@@ -1,11 +1,21 @@
-"""The machine's light is an annunciator, not a state indicator.
+"""What the machine's light means, and how the config encodes it.
 
-It is dark when the machine is off, idle, and running alike -- those are
-indistinguishable. It lights only to ask for attention, and latches until the operator
-acts. Red means an error occurred; green means a run finished.
+Observed on the machine:
 
-Because it may or may not blink, the config matches `on` rather than a specific mode:
-red means error whether it is solid or flashing. These tests pin that down, from token
+    green steady    a cycle is RUNNING
+    green flashing  the cycle COMPLETED, waiting to be dismissed
+    red lit         a fault, latched until the operator acts
+    both dark       off, or idle between runs
+
+Red is the part that behaves like an annunciator: it latches and means the same thing
+solid or blinking, which is why states match `on` for it rather than a specific mode.
+Green is not -- steady and flashing mean different things, and the whole value of the
+tap rests on telling them apart.
+
+This file was originally written on the assumption that the light was a pure
+annunciator and that running was unobservable. That was wrong, and expensive: both
+green modes resolved to `done`, so the completion alert fired when a cycle STARTED and
+nothing fired when it finished. These tests now pin the corrected meaning, from token
 parsing through to committed state over both sensors.
 """
 
@@ -97,7 +107,7 @@ def test_every_observable_pattern_is_named(name):
     ("red", "green", "expected"),
     [
         (OFF, OFF, "clear"),
-        (OFF, STEADY, "done"),
+        (OFF, STEADY, "running"),
         (OFF, FLASHING, "done"),
         (STEADY, OFF, "error"),
         (FLASHING, OFF, "error"),
@@ -118,8 +128,9 @@ def test_error_wins_when_both_are_lit(config=None):
 
 
 def test_clear_does_not_claim_the_machine_is_idle():
-    """`clear` means nothing is pending. The machine may be off, idle or mid-run, and
-    the light cannot tell them apart -- the name must not imply otherwise."""
+    """`clear` means nothing is pending. The machine may be powered off or idle between
+    runs, and the light cannot tell those apart -- the name must not imply otherwise.
+    Mid-run is no longer in that set: a running cycle holds green steady."""
     config = load_config(CONFIG_DIR / "machine1.yaml")
     assert "idle" not in [spec.name for spec in config.states]
     assert config.resolve_state({"red": OFF, "green": OFF}) == "clear"
@@ -165,6 +176,12 @@ def red_blinking(hz=1.5, duty=0.5):
     return lambda t: {"red": (t * hz) % 1.0 < duty, "green": False}
 
 
+def green_blinking(hz=1.0, duty=0.5):
+    """Completion. Measured on the machine at about 1Hz, 50% duty -- the controller
+    pulsing the green leg, which is also the relay you can hear clicking."""
+    return lambda t: {"red": False, "green": (t * hz) % 1.0 < duty}
+
+
 @pytest.fixture
 def machine1():
     return load_config(CONFIG_DIR / "machine1.yaml")
@@ -187,9 +204,20 @@ def test_a_blinking_error_is_still_an_error(machine1):
     assert lit.state == "error"  # ...but not depended on
 
 
-def test_a_completed_run_commits_done(machine1):
-    readings = drive(machine1, [(5.0, dark), (40.0, green_solid), (10.0, dark)])
-    assert [state for state, _ in commits(readings)] == ["clear", "done", "clear"]
+def test_a_run_commits_running_then_done(machine1):
+    """The sequence the machine actually produces, and the one the original config got
+    backwards: solid green while the cycle runs, flashing green once it finishes."""
+    readings = drive(
+        machine1, [(5.0, dark), (40.0, green_solid), (40.0, green_blinking()), (10.0, dark)]
+    )
+    assert [state for state, _ in commits(readings)] == ["clear", "running", "done", "clear"]
+
+
+def test_steady_green_is_not_a_completed_run(machine1):
+    """Guards the original bug directly: a cycle that starts and is still going must
+    never resolve to `done`, because that fires a completion alert at the start."""
+    readings = drive(machine1, [(5.0, dark), (40.0, green_solid)])
+    assert [state for state, _ in commits(readings)] == ["clear", "running"]
 
 
 def test_a_light_that_switches_from_blinking_to_solid_does_not_renotify(machine1):
@@ -200,13 +228,16 @@ def test_a_light_that_switches_from_blinking_to_solid_does_not_renotify(machine1
 
 
 def test_error_then_done_is_two_notifications(machine1):
-    readings = drive(machine1, [(5.0, dark), (30.0, red_solid), (10.0, dark), (30.0, green_solid)])
+    readings = drive(
+        machine1, [(5.0, dark), (30.0, red_solid), (10.0, dark), (30.0, green_blinking())]
+    )
     assert [state for state, _ in commits(readings)] == ["clear", "error", "clear", "done"]
 
 
 def test_dwell_measures_response_time_not_machine_time(machine1):
-    """`since` on a latched state is how long the light sat waiting for the operator
-    -- which is the number worth logging, now that machine run time is unobservable."""
+    """`since` on a latched state is how long the light sat waiting for the operator,
+    which is response time rather than machine time. Run duration is a separate thing
+    and is measurable: it is the interval from `running` to `done`."""
     lit_for = 45.0
     readings = drive(machine1, [(5.0, dark), (lit_for, red_solid)])
     last = readings[-1]

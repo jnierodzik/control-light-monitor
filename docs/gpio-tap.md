@@ -305,7 +305,7 @@ What each piece of the chain proved in that one cycle:
 - Debounce, state resolution, MQTT publish, rule evaluation and push delivery all work
   end to end on hardware, in about a second.
 
-Not yet exercised on the real press: the `error` path. Red has only ever been tested
+Not yet exercised on the real system: the `error` path. Red has only ever been tested
 with a bench supply. It resolves from the same two-segment table and shares the whole
 downstream chain, so the risk is low, but it is untested and should not be described
 otherwise until a genuine fault occurs.
@@ -324,7 +324,7 @@ no second transition, so nothing about the machine will ever trigger a second at
 So a single failed POST used to mean the alert was gone. The cooldown was correctly not
 claimed, which sounds like the escape hatch but isn't: the next notification requires a
 state change, and a latched lamp produces none. The only trace was a `delivered=0` row in
-SQLite, next to a phone that never buzzed and a press that needed a human. Not academic
+SQLite, next to a phone that never buzzed and a system that needed a human. Not academic
 on this unit — its Wi-Fi has been intermittent throughout, and power saving is still on.
 
 The fix is a queue in the engine, retried on the 5-second tick it already runs:

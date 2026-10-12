@@ -41,25 +41,31 @@ detection:
   flash_duty_range: [0.2, 0.8]
   flash_min_transitions: 2
 
-# The machine's stack light is an ANNUNCIATOR, not a state indicator.
+# What the light means, observed on the machine 2026-10-09:
 #
-# It is dark when the machine is powered off, when it is idle, AND while it is running.
-# Those three are indistinguishable -- "running" is simply not observable from this
-# light. It lights only to ask for attention, and latches until the operator acts:
+#   green steady    a cycle is RUNNING, lit for its whole duration
+#   green flashing  the cycle COMPLETED and is waiting to be dismissed
+#   red lit         a fault, latched until the operator acts
+#   both dark       powered off, or idle between runs
 #
-#   red lit   -> an error occurred
-#   green lit -> a run completed successfully
+# This was originally written up as a pure annunciator -- dark when off, idle and
+# running alike, lighting only to ask for attention. True of red, wrong about green,
+# and not harmless: both green modes matched `green: "on"` and resolved to `done`, so
+# the alert fired when a cycle STARTED and nothing fired when it finished.
 #
-# "on" matches steady OR flashing, because red means error whether or not it blinks.
-# The flash mode is still measured and published on every payload, so if blinking turns
-# out to mean something distinct from solid, splitting these is a one-line change.
+# The earlier version of this comment said that if blinking turned out to mean
+# something distinct from solid, splitting them would be a one-line change. It did,
+# and it was.
 #
-# Note that "on" and "off" must be quoted: YAML 1.1 reads them bare as booleans.
+# "on" still matches steady OR flashing, and is used for red, which means a fault
+# either way. Note that "on" and "off" must be quoted: YAML 1.1 reads them bare as
+# booleans.
 # Run `stacklight states config/machine1.yaml` for the full resolution table.
 states:
-  error: {red: "on"}                    # error wins if both were ever lit at once
-  done:  {red: "off", green: "on"}
-  clear: {red: "off", green: "off"}     # nothing pending: off, idle, or mid-run
+  error:   {red: "on"}                      # a fault wins regardless of green
+  done:    {red: "off", green: flashing}    # finished, awaiting the operator
+  running: {red: "off", green: steady}      # cycle in progress
+  clear:   {red: "off", green: "off"}       # off, or idle between runs
 
 publish:
   heartbeat_s: 15              # health topic cadence; the rules watchdog keys off this

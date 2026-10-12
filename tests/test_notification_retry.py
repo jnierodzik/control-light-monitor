@@ -4,7 +4,7 @@ This is the failure mode the whole project exists to avoid. The machine's light 
 annunciator: the node publishes ``error`` once, on the transition, and then the lamp
 just stays lit. Nothing about the machine will ever trigger a second attempt -- so a
 single failed POST used to mean the alert was gone, leaving a ``delivered=0`` row in
-SQLite and a silent phone next to a faulted press.
+SQLite and a silent phone next to a faulted system.
 
 The tests here are deliberately about the ugly cases: a network that is down and comes
 back, one that never comes back, and an alert that reality overtakes while it waits.
@@ -104,7 +104,7 @@ def test_a_failed_alert_is_queued_not_lost(rig):
 
 
 def test_a_queued_alert_is_delivered_when_the_network_returns(rig):
-    """The whole point: the press is still faulted, so the alert is still true."""
+    """The whole point: the system is still faulted, so the alert is still true."""
     engine, notifier, _history, clock = rig()
     notifier.failing = True
     engine.on_state(NODE, state_payload("error"))

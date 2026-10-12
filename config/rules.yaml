@@ -60,7 +60,7 @@ rules:
   # report that Pi being dead. This can, via the person standing at the machine.
   #
   # cooldown_s is 0 on purpose: back-to-back runs should each announce themselves, or
-  # the check silently stops working exactly when the press is busiest.
+  # the check silently stops working exactly when the system is busiest.
   - state: running
     title: "Machine running"
     message: "Green light steady. Run started, monitor is alive."
@@ -92,7 +92,7 @@ staleness:
   priority: default
 
 # What to do when the push itself fails. This matters more here than it looks: the
-# light is an annunciator, so the node publishes `error` once on the transition and
+# `error` state latches, so the node publishes it once on the transition and
 # then the lamp just stays lit. Nothing about the machine will ever trigger a second
 # attempt, so without this a single failed POST means the alert is gone for good.
 #

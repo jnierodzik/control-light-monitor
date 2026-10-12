@@ -1,16 +1,42 @@
 # stacklight-monitor
 
-Watch a machine's stack light with a Raspberry Pi camera and push a phone notification
-when the machine's state changes.
+Watch a machine's stack light and push a phone notification when it needs you.
 
 Currently monitoring an **industrial machine**: a two-segment tower light,
-red over green.
+red over green, with a buzzer.
+
+There are two ways to read a light here, and they share everything downstream of the
+reading. **The live installation uses the electrical tap.** The camera came first and
+still works; see [the camera path](#the-camera-path).
 
 ## How it reads the light
 
-The camera does **not** try to classify colour in a normally exposed photograph. That
-approach falls apart the moment the shop lights change, or when amber and red get
-confused. Instead:
+### The electrical tap
+
+The light is driven by four wires between the control box and the lamp: a common return
+and one switched +24V leg per element. Reading those legs directly is both simpler and
+more reliable than looking at the light, so that is what the live node does.
+
+1. **A pass-through harness.** A cut extension lead rejoins each conductor through a
+   lever connector, with a third wire branching off to the sensing side. Nothing on the
+   machine is cut or modified, and pulling the harness restores the original wiring in
+   about thirty seconds.
+2. **A parallel tap, never in series.** The lamp current does not flow through anything
+   we built. If the tap fails, the operator's status light does not notice.
+3. **Optocouplers for isolation.** The machine's 0V and the Pi's 0V are not necessarily
+   the same potential, and a Pi 5's GPIO has no tolerance for surprises from an
+   industrial environment. Light crosses the barrier; electricity does not.
+4. **Sampled at 100 Hz.** Each leg is a clean binary signal, so "is this lamp lit" needs
+   no interpretation at all.
+
+Full design note, including the measured wiring and what went wrong on the way:
+[`docs/gpio-tap.md`](docs/gpio-tap.md).
+
+### The camera path
+
+The original approach, still supported and tested. It deliberately does **not** classify
+colour in a normally exposed photograph — that falls apart the moment the shop lights
+change, or when amber and red get confused. Instead:
 
 1. **Lock the camera.** Auto-exposure, auto-white-balance and autofocus are all
    disabled, with a fixed exposure time, analogue gain and lens position.
@@ -21,27 +47,33 @@ confused. Instead:
 4. **Threshold.** Per segment, per frame: mean brightness inside the rectangle versus a
    threshold. Colour is at most a secondary sanity check.
 
-Everything else in this repository is plumbing around that idea.
+### What they share
+
+Everything after the reading. Both produce a per-segment brightness number, and from
+there the same code decides lit or unlit, steady or flashing, debounces the result,
+resolves it to a named state and publishes it. A node declares which sensor it is in
+config, and a config that mixes the two is rejected rather than quietly ignored.
 
 ## Architecture
 
 ```
-[node: pi + camera] --MQTT--> [mosquitto] --> [rules engine] --> ntfy
-[node 2: future]    --MQTT-->      ^               |
+[node: pi + tap   ] --MQTT--> [mosquitto] --> [rules engine] --> ntfy
+[node 2: pi + cam ] --MQTT-->      ^               |
                                 heartbeats         +--> SQLite (state history)
 ```
 
 Nodes are dumb and self-contained. They publish semantic state, not pixels. A separate
-rules process decides what is worth a notification. Adding a second camera means
-deploying another node with its own config file and changing nothing centrally.
+rules process decides what is worth a notification. Adding a second machine means
+deploying another node with its own config file and changing nothing centrally -- and it
+does not have to read its light the same way the first one does.
 
 Topics, namespaced per node id:
 
 | Topic | Retain | QoS | Payload |
 | --- | --- | --- | --- |
 | `shop/lights/<node_id>/state` | yes | 1 | JSON; published on committed transitions and refreshed every `state_refresh_s` |
-| `shop/lights/<node_id>/health` | no | 0 | Heartbeat with uptime, frame rate, per-segment raw brightness |
-| `shop/lights/<node_id>/snapshot` | yes | 0 | Annotated debug JPEG; on every transition, plus rate-limited routine ones |
+| `shop/lights/<node_id>/health` | no | 0 | Heartbeat with uptime, sample rate, per-segment raw value |
+| `shop/lights/<node_id>/snapshot` | yes | 0 | **Camera nodes only.** Annotated debug JPEG; on every transition, plus rate-limited routine ones |
 | `shop/lights/<node_id>/availability` | yes | 1 | `online` / `offline`, also registered as the MQTT last will |
 
 `availability` is not in the original design and is the one topic I added. The rules
@@ -50,23 +82,37 @@ this topic to `offline` the moment the broker notices the socket is gone — sec
 instead of a minute. Both paths matter: the will does not fire if the broker itself
 dies, so the heartbeat timeout still earns its place.
 
-## Build status
+## Status
 
-This project is being built in reviewable steps.
+Running on a machine since 2026-10-11, reading the light electrically.
 
-- [x] **1. Skeleton, config, `FrameSource` + `SyntheticSource`**
-- [x] **2. Detection engine (ROI sampling, flash detection, debounce, state resolution)**
-- [x] **3. MQTT publisher, heartbeats, retained state** — verified against mosquitto
-- [x] **4. `PiCameraSource`, systemd units, deployment** — pulled ahead of the
-      calibration UI, so ROIs get dialled in against the real camera rather than twice
-- [ ] 5. Calibration web UI — only useful for a camera node; shelved while the live
-      install is the electrical tap
-- [x] **6. Rules engine, ntfy, SQLite logging, watchdog** — running on the Pi, verified
-      lamp-to-phone in about a second
+Verified on the machine, through the harness:
 
-## Development, with no camera and no Pi
+```
+21:53:28  clear   -> running    green steady      no notification, by design
+21:54:17  running -> done       green flashing    "Machine run complete" delivered
+```
 
-The hardware is not required to work on this. `SyntheticSource` draws frames
+- [x] Config, detection engine, MQTT publisher, heartbeats, retained state
+- [x] Camera source (`PiCameraSource`) and the synthetic/file sources behind it
+- [x] **Electrical tap** -- harness, optocouplers, GPIO sampler, measured and installed
+- [x] Rules engine -- ntfy, cooldowns, escalation, watchdog, retry, SQLite history
+- [x] systemd units and `make deploy`
+- [ ] Calibration web UI -- only useful for a camera node, shelved
+- [ ] Off-box watchdog -- see [Failure behaviour](#failure-behaviour)
+
+Not yet exercised on the real machine: the `error` path. Red has only been energised
+from a bench supply. It resolves from the same table and shares the whole downstream
+chain, so the risk is low, but it is untested and is not described here as verified.
+
+## Development, with no hardware at all
+
+Neither a Pi, a camera nor a light is required to work on this, and that is a hard
+requirement rather than a convenience -- it is what makes "does it spam me when the
+light flaps" a test rather than an afternoon of watching a phone.
+
+For the tap, `FakePinReader` stands in for the GPIO, driven by a virtual clock. For the
+camera, `SyntheticSource` draws frames
 programmatically — a black background with coloured rectangles that can be switched
 off, steady or flashing on a schedule, with optional sensor noise, ambient light bleed
 and LED glow. Brightness responds to exposure and gain the way a real sensor does, so
@@ -129,24 +175,33 @@ afternoon up a ladder.
 
 ### What the machine's light actually means
 
-Worth stating plainly, because it is not what you would assume and it shaped the design:
-
-**The stack light is an annunciator, not a state indicator.** It is dark when the
-machine is powered off, when it is idle, *and while it is running*. Those three are
-indistinguishable — **"running" is not observable from this light at all**. It lights
-only to ask for attention, and latches until the operator acts:
+Worth stating plainly, because it is not what you would assume, and because we got it
+wrong first:
 
 | Pattern | State | Meaning |
 | --- | --- | --- |
-| both dark | `clear` | nothing pending — off, idle, or mid-run |
-| red lit | `error` | an error occurred |
-| green lit | `done` | a run completed |
+| both dark | `clear` | powered off, or idle between runs |
+| green **steady** | `running` | a cycle is in progress |
+| green **flashing** | `done` | the cycle finished and is waiting to be dismissed |
+| red lit | `error` | a fault, latched until the operator acts |
 
-A consequence for the history log: machine run time cannot be measured, so dwell time
-means something different from what you would expect. The dwell on a latched `error` is
-**how long the light sat waiting for the operator** — response time, not machine time.
-Throughput comes from counting `done` events and the interval between them, not from
-summing a running state.
+The distinction that matters is **steady versus flashing on one wire.** Green solid
+means running; green blinking means finished. The light carries no internal flasher --
+this unit is wired for continuous operation only -- so the blinking is the controller
+pulsing the green leg, and the audible click at completion is that relay.
+
+**This was originally documented as a pure annunciator**: dark when off, idle and
+running alike, lighting only to ask for attention. That is true of red and wrong about
+green, and the error was not harmless. Both green modes matched `green: "on"` and
+resolved to `done`, so the config fired a completion alert the moment a cycle *started*,
+and then produced no transition at all when the cycle genuinely finished -- a false
+alert at the start and silence at the end. It was only caught by watching the real
+machine. There is now a regression test that fails if the two are collapsed again.
+
+A consequence for the history log: because `running` and `done` are distinct states,
+**run duration falls out of the transition log for free** -- the interval between them.
+The dwell on a latched `error` means something different again: it is how long the light
+sat waiting for the operator, which is response time rather than machine time.
 
 ### The `on` mode
 
@@ -199,6 +254,8 @@ cannot be defined as a state name.
 
 ### The dark reference
 
+*Camera path only.*
+
 `dark_reference` names a region that must **always** read dark. If it starts reading
 bright, the camera has been bumped or the lighting situation changed, and every other
 reading in the frame is suspect. When it trips, the node publishes
@@ -206,6 +263,8 @@ reading in the frame is suspect. When it trips, the node publishes
 answer.
 
 ### The brightness metric
+
+*Camera path only -- a tapped segment is already binary.*
 
 `detection.metric` controls how an ROI's pixels collapse to one number:
 
@@ -250,6 +309,8 @@ The health heartbeat adds `uptime_s`, `fps`, `fps_configured`, `frames`, `metric
 cannot be mistaken for a stalled camera.
 
 ### Snapshots
+
+*Camera path only. A GPIO node has no frame to publish.*
 
 A raw underexposed frame is almost entirely black and makes a poor debug image, so
 snapshots are optionally annotated — each ROI outlined and labelled with its measured
@@ -336,7 +397,7 @@ The dark reference only trips when it stays bright, not on a single frame: a ref
 or a passing torch is not a moved camera. Raw brightness values stay in the payload
 throughout, so a degraded node can be diagnosed without shelling into it.
 
-## Camera abstraction
+## Source abstraction
 
 | Source | Use |
 | --- | --- |
@@ -396,6 +457,8 @@ camera is a second config file and a second `systemctl enable` — nothing centr
 `make logs`, `make restart` and `make probe` cover the day-to-day.
 
 ### What the camera is locked to
+
+*Camera path only.*
 
 Everything automatic is switched off, because the detector needs the same frame under the
 same conditions every time: `AeEnable` and `AwbEnable` false, `ExposureTime` and
