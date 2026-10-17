@@ -146,8 +146,8 @@ eventually. It cost us an OS.
 
 ## Working on it
 
-No Pi, camera or light required — that's deliberate, and it's what makes "does it spam
-me when the light flaps" a test rather than an afternoon of watching a phone.
+No Pi, no light and no wiring required — that's deliberate, and it's what makes "does
+it spam me when the light flaps" a test rather than an afternoon of watching a phone.
 
 ```bash
 make setup
@@ -162,9 +162,4 @@ make lint
 | [Design notes](docs/design.md) | How it works, and why. Start here to understand it |
 | [Parts](docs/parts.md) | Every part, why it's that part, and the measured wiring |
 | [The electrical tap](docs/gpio-tap.md) | Isolation, polarity, and what went wrong on the way |
-| [Pi setup](docs/pi-setup.md) | Longer-form setup — still written around the camera |
 | [Enclosure](hardware/enclosure/README.md) | Print settings, fasteners, assembly |
-
-A camera-based node is also supported and tested — it was the original approach, before
-the light turned out to be readable electrically. See the
-[design notes](docs/design.md#the-camera-path).
