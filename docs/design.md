@@ -102,7 +102,7 @@ Verified on the machine, through the harness:
 - [x] Rules engine -- ntfy, cooldowns, escalation, watchdog, retry, SQLite history
 - [x] systemd units and `make deploy`
 - [ ] Calibration web UI -- only useful for a camera node, shelved
-- [ ] Off-box watchdog -- see [Failure behaviour](#failure-behaviour)
+- [ ] Off-box watchdog -- see [Where the broker lives](#where-the-broker-lives)
 
 Not yet exercised on the real machine: the `error` path. Red has only been energised
 from a bench supply. It resolves from the same table and shares the whole downstream
@@ -168,8 +168,8 @@ uv run stacklight synth config/dev-synthetic.yaml --mode red=flashing --frames 2
 
 ## Configuration
 
-One YAML file per node; see [`config/machine1.yaml`](config/machine1.yaml) for the annotated
-production config and [`config/dev-synthetic.yaml`](config/dev-synthetic.yaml) for the
+One YAML file per node; see [`config/machine1.yaml`](../config/machine1.yaml) for the annotated
+production config and [`config/dev-synthetic.yaml`](../config/dev-synthetic.yaml) for the
 laptop equivalent.
 
 Validation is strict: unknown keys are errors, not warnings, and ROIs are bounds
@@ -330,8 +330,8 @@ deploy without waiting for the light to change.
 
 ### Failure behaviour
 
-The camera is the thing that cannot be paused, so paho owns the socket on its own thread
-and publishes fail fast rather than stalling the capture loop. A node whose broker is
+Sampling is the thing that cannot be paused, so paho owns the socket on its own thread
+and publishes fail fast rather than stalling the sampling loop. A node whose broker is
 down keeps sampling and detecting; state publishes that fail are marked pending and
 retried on the next frame, and the reconnect callback resends the retained state so the
 broker's copy is never left stale. A broker that is unreachable at startup is a warning,
@@ -341,6 +341,57 @@ useful than one that exits.
 The same reasoning applies one hop further out, to the push itself. See
 [Undelivered notifications](gpio-tap.md#undelivered-notifications) — for a latching
 light this is the difference between an alert arriving late and an alert never arriving.
+
+### Where the broker lives
+
+The broker and the rules engine are separate processes from the node, which leaves a
+choice about where they run.
+
+**Everything on one Pi** — mosquitto, node and rules engine together. Simplest, one box,
+and what is running today. The catch is structural: *a silent monitor is worse than no
+monitor*, and if that Pi dies, the thing that would have reported it dies with it. The
+heartbeat watchdog cannot fire from a dead machine.
+
+**Node on the Pi, broker and rules elsewhere** — on a second always-on machine, a NAS or
+a small VPS. The watchdog becomes real, at the cost of another box to maintain. A laptop
+does not count; it sleeps.
+
+**A hosted dead-man's-switch** closes the same gap without a second machine. The rules
+engine pings an uptime checker on a schedule, and *that service* raises the alarm when
+the pings stop. Cheap, off-site, and a few lines of code.
+
+One mitigation is already in place and costs nothing. The `running` notification fires
+every time a cycle starts, and every cycle is started by hand — so an operator who
+expects a buzz and does not get one has detected the failure that no in-band check can.
+It is the only signal in the system that does not depend on the Pi being alive in order
+to report that the Pi is dead.
+
+### Two things that bit us on the network
+
+**`.local` resolves to an IPv6 link-local address first**, which carries no scope id, so
+a plain `ssh stacklight.local` fails with "No route to host". Everything in the Makefile
+forces IPv4 with `SSH = ssh -4`. By hand:
+
+```bash
+ssh -4 user@stacklight.local
+```
+
+**Wi-Fi power saving.** The first ping to this node measured 707ms, which is harmless on
+a laptop and not harmless on something whose heartbeats are a watchdog signal. Disable it
+with a NetworkManager drop-in rather than per-connection:
+
+```bash
+printf '[connection]\nwifi.powersave = 2\n' | sudo tee /etc/NetworkManager/conf.d/wifi-powersave-off.conf
+sudo systemctl restart NetworkManager
+```
+
+A drop-in because this Pi's Wi-Fi is managed by netplan, and a per-connection `nmcli`
+change can be overwritten on the next boot.
+
+Two related notes from the same episode. Reserve the Pi's address in the router's DHCP
+table so the node does not move. And prefer **5 GHz** if the network offers it — 2.4 GHz
+is the band industrial machinery pollutes, and a day of dropouts here is best explained
+by exactly that.
 
 ## Detection
 
@@ -429,10 +480,8 @@ omitted, so the geometry you calibrate is the geometry you test.
 
 ## On the Pi
 
-**Setting up from scratch: [`docs/pi-setup.md`](pi-setup.md)** — parts check
-(including the 22-pin cable the Pi 5 needs), flashing for headless boot, and a
-stock-tools procedure for proving the underexposure technique on your actual light before
-any of this code runs on the Pi.
+**Setting one up from scratch: [the README](../README.md)** — what to buy, what to
+print, how to wire the tap and how to deploy it.
 
 **What it is built from: [`docs/parts.md`](parts.md)** — every part, with the
 reason it is that part rather than a similar-looking one, and the measured facts about
