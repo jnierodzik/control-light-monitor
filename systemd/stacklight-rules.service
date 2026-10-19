@@ -19,7 +19,9 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=jnierodzik
+# CHANGE THIS to the username you set when flashing the card. `pi` is only a
+# placeholder, and systemd refuses to start a unit whose User does not exist.
+User=pi
 WorkingDirectory=/opt/stacklight
 ExecStart=/opt/stacklight/.venv/bin/stacklight-rules /etc/stacklight/rules.yaml
 Environment=PYTHONUNBUFFERED=1

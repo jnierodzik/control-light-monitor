@@ -16,6 +16,10 @@ ntfy:
 
 database: /var/lib/stacklight/history.sqlite
 
+# These titles and messages are what lands on your phone. Change them to name the
+# machine -- "Annealer fault" rather than "Machine fault". The monitor-health alerts
+# (offline, silent, back) are generated in code and use `node_id` from the node config
+# instead; see the README.
 rules:
   - state: error
     title: "Machine fault"

@@ -66,7 +66,7 @@ calibrate:
 # Override only to target a different Pi or config:
 #   make deploy PI=other-pi.local PI_USER=someone NODE=other-node
 PI      ?= stacklight.local
-PI_USER ?= jnierodzik
+PI_USER ?= pi
 # The config basename under config/, which is also the systemd instance name:
 # stacklight-node@machine1 reads /etc/stacklight/machine1.yaml. Defaults to the tap,
 # not the camera -- machine1.yaml needs picamera2 and a camera that is not attached.
@@ -80,7 +80,7 @@ SCP     ?= scp -4
 # Everything needed to run the tap by hand on a freshly flashed Pi, with no sudo and no
 # systemd. This is what gets re-run after a reflash; it takes about a minute.
 #
-#   make stage PI=stacklight.local PI_USER=jnierodzik
+#   make stage PI=stacklight.local PI_USER=pi
 STAGE_DIR ?= stacklight
 stage:
 	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' \

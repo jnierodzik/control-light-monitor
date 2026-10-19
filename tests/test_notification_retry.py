@@ -483,7 +483,11 @@ def test_an_unreachable_server_raises_notifyerror(tmp_path):
     config = parse_rules_config(
         rules_dict(
             # 203.0.113.0/24 is TEST-NET-3: reserved for documentation, never routed.
-            ntfy={"topic": "example-topic-7k2mq9xvbn", "server": "http://203.0.113.1", "timeout_s": 1}
+            ntfy={
+                "topic": "example-topic-7k2mq9xvbn",
+                "server": "http://203.0.113.1",
+                "timeout_s": 1,
+            }
         )
     )
     notifier = NtfyNotifier(config.ntfy)
@@ -498,7 +502,11 @@ def test_the_engine_queues_a_real_unreachable_push(tmp_path):
 
     config = parse_rules_config(
         rules_dict(
-            ntfy={"topic": "example-topic-7k2mq9xvbn", "server": "http://203.0.113.1", "timeout_s": 1}
+            ntfy={
+                "topic": "example-topic-7k2mq9xvbn",
+                "server": "http://203.0.113.1",
+                "timeout_s": 1,
+            }
         )
     )
     clock = FakeClock()

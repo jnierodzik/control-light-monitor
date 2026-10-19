@@ -28,7 +28,7 @@ def parse_with(config_dict: dict, **changes) -> None:
 # -- shipped configs ---------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["machine1.yaml", "dev-synthetic.yaml"])
+@pytest.mark.parametrize("name", ["example-camera.yaml", "dev-synthetic.yaml"])
 def test_shipped_configs_are_valid(name):
     config = load_config(CONFIG_DIR / name)
     assert config.segment_names == ("red", "green")
@@ -71,7 +71,7 @@ def test_missing_required_key_is_rejected(config_dict):
         parse_config(config_dict)
 
 
-@pytest.mark.parametrize("node_id", ["machine", "af 100", "af/100", "", "-af"])
+@pytest.mark.parametrize("node_id", ["Machine1", "a b", "a/b", "", "-a"])
 def test_node_id_must_be_topic_safe(config_dict, node_id):
     config_dict["node_id"] = node_id
     with pytest.raises(ConfigError, match="node_id"):

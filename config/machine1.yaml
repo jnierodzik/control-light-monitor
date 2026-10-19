@@ -10,6 +10,9 @@
 #   Red    -> opto ch2 -> GPIO 17
 #   Purple -> opto ch3 -> GPIO 22   (buzzer)
 
+# Names this node. Appears in the MQTT topic, in the history log, and in the
+# monitor-health alerts ("machine1: monitor offline"). If you change it, rename this
+# file to match -- the filename is the systemd instance name. See the README.
 node_id: machine1
 sensor: gpio
 

@@ -121,7 +121,40 @@ committed placeholder. Subscribe to the same topic in the ntfy app.
 Edit [`config/machine1.yaml`](config/machine1.yaml) if your light means something
 different from ours.
 
-## 7. Check it
+## 7. Name your machine
+
+Notifications say "Machine" out of the box. If you are watching more than one thing, or
+just want the alert to say what it is, there are two places to change and they feed
+different messages.
+
+**The alert text** — [`config/rules-pi.yaml`](config/rules-pi.yaml), the `title` and
+`message` on each rule:
+
+```yaml
+  - state: error
+    title: "Annealer fault"
+    message: "Red light is on. The annealer has stopped and needs you."
+```
+
+That covers the notifications you will actually see day to day: fault, run complete,
+running, unreadable.
+
+**The node's name** — `node_id` in [`config/machine1.yaml`](config/machine1.yaml):
+
+```yaml
+node_id: annealer
+```
+
+This one feeds the monitor-health alerts, which are generated in code rather than from
+config and read `annealer: monitor offline`. It is also the MQTT topic name
+(`shop/lights/<node_id>/state`) and how the history log labels rows.
+
+**If you change `node_id`, rename the config file to match** — `config/annealer.yaml` —
+because the filename is the systemd instance name. Then deploy with `make deploy
+NODE=annealer` and enable `stacklight-node@annealer`. Running two machines means two
+config files, two node ids and one rules engine; nothing central changes.
+
+## 8. Check it
 
 ```bash
 make logs

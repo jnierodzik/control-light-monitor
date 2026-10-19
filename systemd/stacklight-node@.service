@@ -21,9 +21,11 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# Must match the username chosen when flashing the card. The video group is what grants
-# access to the camera devices; without it libcamera finds nothing.
-User=jnierodzik
+# CHANGE THIS to the username you set when flashing the card. `pi` is only a
+# placeholder, and systemd refuses to start a unit whose User does not exist.
+# The video group grants access to the camera devices, and matters only on a camera
+# node; without it libcamera finds nothing.
+User=pi
 SupplementaryGroups=video
 
 WorkingDirectory=/opt/stacklight
