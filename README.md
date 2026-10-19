@@ -134,12 +134,20 @@ different from ours.
 
 ## 7. Name your machine
 
-Notifications say "Machine" out of the box. If you are watching more than one thing, or
-just want the alert to say what it is, there are two places to change and they feed
-different messages.
+Notifications say "Machine" out of the box. Naming the actual machine is a two-file
+change, and you can make it **without putting that name in the repo** — useful if the
+checkout is shared or public and the machine is not.
 
-**The alert text** — [`config/rules-pi.yaml`](config/rules-pi.yaml), the `title` and
-`message` on each rule:
+Any config can have a `.local.yaml` twin. `make deploy` sends the local one when it
+exists and the committed one when it does not, and `config/*.local.yaml` is gitignored.
+Same idea as `local.mk` for your hostname.
+
+```bash
+cp config/rules-pi.yaml config/rules-pi.local.yaml   # the alert text
+cp config/machine1.yaml config/machine1.local.yaml   # the node's name
+```
+
+**In `config/rules-pi.local.yaml`** — the alerts you see day to day:
 
 ```yaml
   - state: error
@@ -147,23 +155,23 @@ different messages.
     message: "Red light is on. The annealer has stopped and needs you."
 ```
 
-That covers the notifications you will actually see day to day: fault, run complete,
-running, unreadable.
-
-**The node's name** — `node_id` in [`config/machine1.yaml`](config/machine1.yaml):
+**In `config/machine1.local.yaml`** — `node_id`, which feeds the monitor-health alerts
+(`annealer: monitor offline`). Those are generated in code rather than from config, so
+`node_id` is the only lever on them. It is also the MQTT topic and the history label:
 
 ```yaml
 node_id: annealer
 ```
 
-This one feeds the monitor-health alerts, which are generated in code rather than from
-config and read `annealer: monitor offline`. It is also the MQTT topic name
-(`shop/lights/<node_id>/state`) and how the history log labels rows.
+That is also where your real ntfy topic belongs. The committed `rules-pi.yaml` carries a
+placeholder, because on ntfy.sh the topic name is the only secret there is.
 
-**If you change `node_id`, rename the config file to match** — `config/annealer.yaml` —
-because the filename is the systemd instance name. Then deploy with `make deploy
-NODE=annealer` and enable `stacklight-node@annealer`. Running two machines means two
-config files, two node ids and one rules engine; nothing central changes.
+**Editing the committed files directly works too** — it is simpler, and fine if the repo
+is private or you do not mind the name being in it.
+
+**Running more than one machine** means one config file per node, each with its own
+`node_id`, and one rules engine. Deploy with `make deploy NODE=annealer` and enable
+`stacklight-node@annealer`; nothing central changes.
 
 ## 8. Check it
 

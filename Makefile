@@ -136,7 +136,11 @@ install-cmd:
 deploy:
 	rsync -az --delete -e '$(SSH)' --exclude '.venv' --exclude '.git' --exclude '__pycache__' 		--exclude 'samples' --exclude '.pytest_cache' --exclude '.ruff_cache' --exclude 'hardware' 		./ $(REMOTE):/opt/stacklight/
 	$(SSH) $(REMOTE) '/opt/stacklight/.venv/bin/pip install -q -e /opt/stacklight'
-	$(SCP) config/$(NODE).yaml $(REMOTE):/etc/stacklight/$(NODE).yaml
+	@# Same local-override rule as the rules config below: if config/<NODE>.local.yaml
+	@# exists it is what gets deployed, so a checkout can stay generic while the
+	@# installation names the actual machine. config/*.local.yaml is gitignored.
+	$(SCP) $$([ -f config/$(NODE).local.yaml ] && echo config/$(NODE).local.yaml || echo config/$(NODE).yaml) \
+		$(REMOTE):/etc/stacklight/$(NODE).yaml
 	@# The committed rules config carries a placeholder topic, because on ntfy.sh the
 	@# topic name is the only secret there is. The real one lives in the gitignored
 	@# local override, and that is what actually gets deployed when it exists.
