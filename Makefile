@@ -65,6 +65,14 @@ calibrate:
 # The defaults below are the live machine tap, so plain `make deploy` is usually right.
 # Override only to target a different Pi or config:
 #   make deploy PI=other-pi.local PI_USER=someone NODE=other-node
+# Your own values go in local.mk, which is gitignored. The defaults below are
+# placeholders so that a fresh clone reads sensibly, not settings that will work.
+#
+#   PI      = my-pi.local
+#   PI_USER = jo
+#   NODE    = annealer
+-include local.mk
+
 PI      ?= stacklight.local
 PI_USER ?= pi
 # The config basename under config/, which is also the systemd instance name:

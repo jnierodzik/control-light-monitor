@@ -97,7 +97,18 @@ every run, because the tap's return current was flowing through it.
 
 ## 5. Install
 
-From your computer, not the Pi:
+From your computer, not the Pi.
+
+First tell it where your Pi is. `local.mk` is gitignored, so your settings stay out
+of the repo:
+
+```makefile
+PI      = my-pi.local
+PI_USER = jo
+NODE    = machine1
+```
+
+Then:
 
 ```bash
 make bootstrap    # packages, mosquitto, directories, venv

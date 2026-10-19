@@ -25,3 +25,6 @@ data/
 # Holds the real ntfy topic. On ntfy.sh the topic name is the only secret there is,
 # so it stays out of git; the committed configs carry a placeholder.
 config/*.local.yaml
+
+# Per-machine Makefile settings: hostname, user, node name.
+local.mk
